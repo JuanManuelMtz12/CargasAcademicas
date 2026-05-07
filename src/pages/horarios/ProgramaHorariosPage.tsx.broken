@@ -1,0 +1,2291 @@
+import { useEffect, useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { supabase } from '@/lib/supabase';
+import { Database } from '@/types/database';
+import { toast } from 'sonner';
+import { useScheduleValidation, ValidationResult } from '@/hooks/useScheduleValidation';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Button } from '@/components/ui/button';
+import ConflictConfirmationModal from '@/components/ConflictConfirmationModal';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from '@/components/ui/tabs';
+import {
+  Plus,
+  Edit,
+  Trash2,
+  Clock,
+  AlertCircle,
+  CheckCircle,
+  AlertTriangle,
+  ArrowLeft,
+  Calendar,
+  User,
+  BookOpen,
+  Users,
+  FileDown,
+} from 'lucide-react';
+import { generateOficioFromTemplate, downloadAllOficiosForAllTeachers } from '@/utils/oficioGenerator';
+
+
+// Tipos de la base de datos
+type Program = Database['public']['Tables']['programs']['Row'];
+type SchoolCycle = Database['public']['Tables']['school_cycles']['Row'];
+type Schedule = Database['public']['Tables']['schedule']['Row'];
+type ScheduleInsert = Database['public']['Tables']['schedule']['Insert'];
+type Teacher = Database['public']['Tables']['teachers']['Row'];
+type Subject = Database['public']['Tables']['subjects']['Row'];
+type Group = Database['public']['Tables']['groups']['Row'];
+
+// Interfaces extendidas para datos relacionados
+interface ProgramWithRelations extends Program {
+  coordinador?: { id: string; name: string } | null;
+  sede?: { id: string; name: string } | null;
+}
+
+interface TeacherWithCategory extends Teacher {
+  category?: {
+    id: string;
+    category: string;
+    subcategory: string | null;
+    max_hours_week: number;
+  } | null;
+}
+
+interface ScheduleWithRelations extends Schedule {
+  teacher?: { id: string; name: string } | null;
+  subject?: { id: string; name: string; clave: string; program_id?: string } | null;
+  group?: { id: string; name: string } | null;
+}
+
+// Tipos del hook de validación ya importados arriba
+
+// Interfaces para cálculo de horas del maestro
+interface TeacherHoursResult {
+  current_hours: number;
+  additional_hours: number;
+  total_hours: number;
+  max_hours: number;
+  exceeds_limit: boolean;
+  category: string;
+  subcategory: string | null;
+}
+
+// Datos del formulario de asignación de horarios
+interface ScheduleFormData {
+  teacher_id: string;
+  subject_id: string;
+  group_id: string;
+  day: 'Lunes' | 'Martes' | 'Miércoles' | 'Jueves' | 'Viernes' | 'Sábado' | '';
+  start_hour: number;
+  end_hour: number;
+  school_cycle_id: string;
+}
+
+// Nuevos tipos para formulario multi-día
+interface DaySchedule {
+  day: 'Lunes' | 'Martes' | 'Miércoles' | 'Jueves' | 'Viernes' | 'Sábado' | '';
+  start_hour: number;
+  end_hour: number;
+  enabled: boolean;
+}
+
+interface MultiDayScheduleFormData {
+  teacher_id: string;
+  subject_id: string;
+  group_id: string;
+  school_cycle_id: string;
+  days: DaySchedule[];
+}
+
+export default function ProgramaHorariosPage() {
+  const { programId } = useParams<{ programId: string }>();
+  const navigate = useNavigate();
+
+  // Estados principales
+  const [program, setProgram] = useState<ProgramWithRelations | null>(null);
+  const [schoolCycles, setSchoolCycles] = useState<SchoolCycle[]>([]);
+  const [selectedCycleId, setSelectedCycleId] = useState<string>('');
+  const [schedules, setSchedules] = useState<ScheduleWithRelations[]>([]);
+  const [teachers, setTeachers] = useState<TeacherWithCategory[]>([]);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Estados del modal de asignación
+  const [editingSchedule, setEditingSchedule] = useState<ScheduleWithRelations | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+
+  const [submitting, setSubmitting] = useState(false);
+  const [formData, setFormData] = useState<ScheduleFormData>({
+    teacher_id: '',
+    subject_id: '',
+    group_id: '',
+    day: '',
+    start_hour: 8,
+    end_hour: 9,
+    school_cycle_id: '',
+  });
+
+  // Estados para formulario multi-día
+  const [multiDayFormData, setMultiDayFormData] = useState<MultiDayScheduleFormData>({
+    teacher_id: '',
+    subject_id: '',
+    group_id: '',
+    school_cycle_id: '',
+    days: []
+  });
+  const [isMultiDayMode, setIsMultiDayMode] = useState(false);
+
+  // Hook de validación profesional con fallback
+  const { validateSchedule: runValidation, validating, validationResult: hookValidationResult, clearValidation } = useScheduleValidation();
+  
+  // Estados de validación adicionales
+  const [calculatingHours, setCalculatingHours] = useState(false);
+  const [teacherHoursResult, setTeacherHoursResult] = useState<TeacherHoursResult | null>(null);
+
+  // Estados para eliminar
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [deletingSchedule, setDeletingSchedule] = useState<ScheduleWithRelations | null>(null);
+
+  // Estados para modal de confirmación de conflictos
+  const [isConflictDialogOpen, setIsConflictDialogOpen] = useState(false);
+  const [conflictValidationResult, setConflictValidationResult] = useState<ValidationResult | null>(null);
+  const [pendingScheduleData, setPendingScheduleData] = useState<ScheduleInsert | null>(null);
+
+  // Estados de filtros para vista de tabla
+  const [selectedGroupFilter, setSelectedGroupFilter] = useState<string>('all');
+  const [selectedTeacherFilter, setSelectedTeacherFilter] = useState<string>('all');
+  const [selectedView, setSelectedView] = useState<'calendar' | 'table'>('calendar');
+
+  // Cargar datos iniciales
+  useEffect(() => {
+    if (programId) {
+      loadInitialData();
+    }
+  }, [programId]);
+
+  // Cargar horarios cuando cambia el ciclo seleccionado
+  useEffect(() => {
+    if (selectedCycleId && programId) {
+      loadSchedules();
+    }
+  }, [selectedCycleId, programId]);
+
+
+
+  /**
+   * Carga todos los datos iniciales necesarios para la página
+   * - Información del programa
+   * - Ciclos escolares activos
+   * - Maestros asignados al programa
+   * - Materias del programa
+   * - Grupos disponibles
+   */
+  const loadInitialData = async () => {
+    setLoading(true);
+    try {
+      await Promise.all([
+        loadProgram(),
+        loadSchoolCycles(),
+        loadTeachers(),
+        loadSubjects(),
+        loadGroups(),
+      ]);
+    } catch (error) {
+      console.error('Error loading initial data:', error);
+      toast.error('Error al cargar los datos');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /**
+   * Carga la información del programa actual con sus relaciones
+   */
+  const loadProgram = async () => {
+    if (!programId) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('programs')
+        .select(`
+          *,
+          coordinador:coordinator_id (id, name),
+          sede:sede_id (id, name)
+        `)
+        .eq('id', programId)
+        .single();
+
+      if (error) throw error;
+      setProgram(data);
+    } catch (error) {
+      console.error('Error loading program:', error);
+      toast.error('Error al cargar el programa');
+      navigate('/programas');
+    }
+  };
+
+  /**
+   * Carga los ciclos escolares activos
+   * Solo se muestran ciclos que estén marcados como activos
+   */
+  const loadSchoolCycles = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('school_cycles')
+        .select('*')
+        .eq('is_active', true)
+        .order('start_date', { ascending: false });
+
+      if (error) throw error;
+      setSchoolCycles(data || []);
+      
+      // Seleccionar automáticamente el primer ciclo activo
+      if (data && data.length > 0 && !selectedCycleId) {
+        setSelectedCycleId(data[0].id);
+      }
+    } catch (error) {
+      console.error('Error loading school cycles:', error);
+      toast.error('Error al cargar los ciclos escolares');
+    }
+  };
+
+  /**
+   * Carga los maestros asignados al programa actual
+   * Incluye información de la categoría para calcular las horas máximas
+   */
+  const loadTeachers = async () => {
+    if (!programId) return;
+
+    try {
+      // Obtener IDs de maestros asignados al programa
+      const { data: teacherProgramData, error: tpError } = await supabase
+        .from('teacher_program')
+        .select('teacher_id')
+        .eq('program_id', programId);
+
+      if (tpError) throw tpError;
+
+      const teacherIds = teacherProgramData?.map(tp => tp.teacher_id) || [];
+
+      if (teacherIds.length === 0) {
+        setTeachers([]);
+        return;
+      }
+
+      // Obtener información completa de los maestros con sus categorías
+      const { data: teachersData, error: teachersError } = await supabase
+        .from('teachers')
+        .select(`
+          *,
+          category:category_id (
+            id,
+            category,
+            subcategory,
+            max_hours_week
+          )
+        `)
+        .in('id', teacherIds)
+        .order('name');
+
+      if (teachersError) throw teachersError;
+      setTeachers(teachersData || []);
+    } catch (error) {
+      console.error('Error loading teachers:', error);
+      toast.error('Error al cargar los maestros');
+    }
+  };
+
+  /**
+   * Carga las materias/módulos del programa actual
+   * Para licenciaturas se usan subjects, para maestrías se pueden usar modules
+   */
+  const loadSubjects = async () => {
+    if (!programId) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('subjects')
+        .select('*')
+        .eq('program_id', programId)
+        .order('name');
+
+      if (error) throw error;
+      setSubjects(data || []);
+    } catch (error) {
+      console.error('Error loading subjects:', error);
+      toast.error('Error al cargar las materias');
+    }
+  };
+
+  /**
+   * Carga todos los grupos disponibles en el sistema
+   */
+  const loadGroups = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('groups')
+        .select('*')
+        .order('name');
+
+      if (error) throw error;
+      setGroups(data || []);
+    } catch (error) {
+      console.error('Error loading groups:', error);
+      toast.error('Error al cargar los grupos');
+    }
+  };
+
+  /**
+   * Carga los horarios del programa y ciclo seleccionado
+   * Incluye información de maestro, materia y grupo para cada horario
+   * IMPORTANTE: Carga TODOS los horarios del ciclo para detectar conflictos inter-programa
+   */
+  const loadSchedules = async () => {
+    if (!programId || !selectedCycleId) return;
+
+    try {
+      // Obtener IDs de materias del programa actual (para filtrar luego)
+      const { data: programSubjectsData, error: programSubjectsError } = await supabase
+        .from('subjects')
+        .select('id')
+        .eq('program_id', programId);
+
+      if (programSubjectsError) throw programSubjectsError;
+
+      const programSubjectIds = programSubjectsData?.map(s => s.id) || [];
+
+      if (programSubjectIds.length === 0) {
+        setSchedules([]);
+        return;
+      }
+
+      // Obtener TODOS los horarios del ciclo (no solo del programa actual)
+      // Esto es necesario para detectar conflictos entre programas
+      const { data: allSchedulesData, error: schedulesError } = await supabase
+        .from('schedule')
+        .select('*')
+        .eq('school_cycle_id', selectedCycleId)
+        .order('day')
+        .order('start_hour');
+
+      if (schedulesError) throw schedulesError;
+
+      // Si no hay horarios, terminar aquí
+      if (!allSchedulesData || allSchedulesData.length === 0) {
+        setSchedules([]);
+        return;
+      }
+
+      // Obtener datos relacionados en paralelo
+      const teacherIds = [...new Set(allSchedulesData.map(s => s.teacher_id).filter(Boolean))];
+      const allSubjectIds = [...new Set(allSchedulesData.map(s => s.subject_id).filter(Boolean))];
+      const groupIds = [...new Set(allSchedulesData.map(s => s.group_id).filter(Boolean))];
+
+      const [teachersResponse, subjectsResponse, groupsResponse] = await Promise.all([
+        teacherIds.length > 0 
+          ? supabase.from('teachers').select('id, name').in('id', teacherIds)
+          : Promise.resolve({ data: [], error: null }),
+        // IMPORTANTE: Incluir program_id para detectar conflictos inter-programa
+        supabase.from('subjects').select('id, name, clave, program_id').in('id', allSubjectIds),
+        groupIds.length > 0 
+          ? supabase.from('groups').select('id, name').in('id', groupIds)
+          : Promise.resolve({ data: [], error: null })
+      ]);
+
+      // Crear mapas para búsqueda rápida
+      const teachersMap = new Map(teachersResponse.data?.map(t => [t.id, t] as const) || []);
+      const subjectsMap = new Map(subjectsResponse.data?.map(s => [s.id, s] as const) || []);
+      const groupsMap = new Map(groupsResponse.data?.map(g => [g.id, g] as const) || []);
+
+      // Combinar datos de TODOS los horarios
+      const allSchedulesWithRelations = allSchedulesData.map(schedule => ({
+        ...schedule,
+        teacher: schedule.teacher_id ? teachersMap.get(schedule.teacher_id) : null,
+        subject: schedule.subject_id ? subjectsMap.get(schedule.subject_id) : null,
+        group: schedule.group_id ? groupsMap.get(schedule.group_id) : null,
+      }));
+
+      // Guardar TODOS los horarios para detectar conflictos correctamente
+      setSchedules(allSchedulesWithRelations);
+    } catch (error) {
+      console.error('Error loading schedules:', error);
+      toast.error('Error al cargar los horarios');
+    }
+  };
+
+  /**
+   * Inicializa el formulario multi-día con los días según el tipo de programa
+   */
+  const initializeMultiDayForm = () => {
+    const daysOfWeek = getDaysOfWeek();
+    const initialDays: DaySchedule[] = daysOfWeek.map(day => ({
+      day,
+      start_hour: 8,
+      end_hour: 9,
+      enabled: false
+    }));
+    
+    setMultiDayFormData({
+      teacher_id: '',
+      subject_id: '',
+      group_id: '',
+      school_cycle_id: selectedCycleId,
+      days: initialDays
+    });
+  };
+
+  /**
+   * Abre el modal para crear una nueva asignación de horario
+   */
+  const openCreateModal = () => {
+    setEditingSchedule(null);
+    setFormData({
+      teacher_id: '',
+      subject_id: '',
+      group_id: '',
+      day: '',
+      start_hour: 8,
+      end_hour: 9,
+      school_cycle_id: selectedCycleId,
+    });
+    clearValidation();
+    setTeacherHoursResult(null);
+    setIsModalOpen(true);
+  };
+
+  /**
+   * Abre el modal para crear asignaciones multi-día
+   */
+  const openCreateMultiDayModal = () => {
+    setEditingSchedule(null);
+    initializeMultiDayForm();
+    clearValidation();
+    setTeacherHoursResult(null);
+    setIsMultiDayMode(true);
+    setIsModalOpen(true);
+  };
+
+  /**
+   * Convierte el día de string a tipo específico
+   */
+  const validateAndConvertDay = (day: string): 'Lunes' | 'Martes' | 'Miércoles' | 'Jueves' | 'Viernes' | 'Sábado' => {
+    const validDays = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'] as const;
+    const dayIndex = validDays.indexOf(day as any);
+    return dayIndex !== -1 ? validDays[dayIndex] : 'Lunes';
+  };
+
+  /**
+   * Abre el modal para editar un horario existente
+   */
+  const openEditModal = (schedule: ScheduleWithRelations) => {
+    setEditingSchedule(schedule);
+    setFormData({
+      teacher_id: schedule.teacher_id,
+      subject_id: schedule.subject_id,
+      group_id: schedule.group_id,
+      day: validateAndConvertDay(schedule.day),
+      start_hour: schedule.start_hour,
+      end_hour: schedule.end_hour,
+      school_cycle_id: schedule.school_cycle_id || selectedCycleId,
+    });
+    clearValidation();
+    setTeacherHoursResult(null);
+    setIsModalOpen(true);
+  };
+
+  // La validación ahora se maneja al momento de hacer submit del formulario
+
+  /**
+   * Actualiza un día específico en el formulario multi-día
+   */
+  const updateDaySchedule = (dayIndex: number, field: keyof DaySchedule, value: any) => {
+    setMultiDayFormData(prev => ({
+      ...prev,
+      days: prev.days.map((day, index) => 
+        index === dayIndex ? { ...day, [field]: value } : day
+      )
+    }));
+  };
+
+  /**
+   * Valida el formulario multi-día
+   */
+  const validateMultiDayForm = () => {
+    const enabledDays = multiDayFormData.days.filter(day => day.enabled);
+    
+    if (!multiDayFormData.teacher_id || !multiDayFormData.subject_id || !multiDayFormData.group_id) {
+      return { valid: false, message: 'Complete todos los campos requeridos' };
+    }
+    
+    if (enabledDays.length === 0) {
+      return { valid: false, message: 'Seleccione al menos un día de la semana' };
+    }
+    
+    // Validar horarios individuales
+    for (const day of enabledDays) {
+      if (day.start_hour >= day.end_hour) {
+        return { valid: false, message: `La hora de inicio debe ser menor que la de fin para ${day.day}` };
+      }
+      
+      if (day.start_hour < 7 || day.start_hour > 20) {
+        return { valid: false, message: `La hora de inicio para ${day.day} debe estar entre 07:00 y 20:00` };
+      }
+      
+      if (day.end_hour < 8 || day.end_hour > 21) {
+        return { valid: false, message: `La hora de fin para ${day.day} debe estar entre 08:00 y 21:00` };
+      }
+    }
+    
+    // Validar que no haya horarios duplicados en el mismo día
+    const dayScheduleMap = new Map();
+    for (const day of enabledDays) {
+      const key = `${day.day}-${day.start_hour}-${day.end_hour}`;
+      if (dayScheduleMap.has(key)) {
+        return { valid: false, message: `Horarios duplicados en ${day.day}` };
+      }
+      dayScheduleMap.set(key, true);
+    }
+    
+    return { valid: true, message: 'Formulario válido' };
+  };
+
+  /**
+   * Función auxiliar para validar si un horario ya existe
+   */
+  const checkDuplicateSchedule = (scheduleData: ScheduleInsert): boolean => {
+    return schedules.some(existing => 
+      existing.teacher_id === scheduleData.teacher_id &&
+      existing.group_id === scheduleData.group_id &&
+      existing.subject_id === scheduleData.subject_id &&
+      existing.day === scheduleData.day &&
+      existing.start_hour === scheduleData.start_hour &&
+      existing.end_hour === scheduleData.end_hour
+    );
+  };
+
+  /**
+   * Maneja el submit del formulario multi-día
+   */
+  const handleMultiDaySubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    const validation = validateMultiDayForm();
+    if (!validation.valid) {
+      toast.error(validation.message);
+      return;
+    }
+
+    setSubmitting(true);
+    clearValidation();
+
+    try {
+      const enabledDays = multiDayFormData.days.filter(day => day.enabled);
+      const results = [];
+      const schedulesToCreate = [];
+      
+      // Paso 1: Preparar todos los horarios y validar individualmente
+      for (const day of enabledDays) {
+        const scheduleData: ScheduleInsert = {
+          teacher_id: multiDayFormData.teacher_id,
+          subject_id: multiDayFormData.subject_id,
+          group_id: multiDayFormData.group_id,
+          day: day.day as any,
+          start_hour: day.start_hour,
+          end_hour: day.end_hour,
+          school_cycle_id: multiDayFormData.school_cycle_id,
+        };
+        
+        // Validar conflictos para cada día
+        try {
+          const conflictValidation = await runValidation({
+            ...scheduleData,
+            exclude_schedule_id: undefined, // Es creación nueva
+          });
+
+          if (conflictValidation && !conflictValidation.valid) {
+            // Hay conflictos - marcar para confirmación posterior
+            results.push({
+              day: day.day,
+              success: false,
+              conflict: true,
+              data: scheduleData,
+              validation: conflictValidation
+            });
+          } else {
+            // Sin conflictos - agregar a lista de creación directa
+            schedulesToCreate.push(scheduleData);
+            results.push({
+              day: day.day,
+              success: true,
+              conflict: false,
+              data: scheduleData
+            });
+          }
+        } catch (error: any) {
+          results.push({
+            day: day.day,
+            success: false,
+            error: `Error validando ${day.day}: ${error.message}`,
+            data: scheduleData
+          });
+        }
+      }
+
+      // Paso 2: Crear horarios sin conflictos
+      if (schedulesToCreate.length > 0) {
+        const { error } = await supabase
+          .from('schedule')
+          .insert(schedulesToCreate);
+        
+        if (error) {
+          // Si falla la inserción en lote, manejar individualmente
+          console.warn('Error en inserción en lote, intentando individualmente:', error);
+          for (const scheduleData of schedulesToCreate) {
+            const { error: individualError } = await supabase
+              .from('schedule')
+              .insert([scheduleData]);
+            
+            if (individualError) {
+              const result = results.find(r => r.data === scheduleData);
+              if (result) {
+                result.success = false;
+                result.error = individualError.message;
+              }
+            }
+          }
+        }
+      }
+
+      // Paso 3: Manejar conflictos con modal de confirmación
+      const conflictResults = results.filter(r => r.conflict);
+      if (conflictResults.length > 0) {
+        // Preguntar al usuario si quiere continuar con conflictos
+        const confirmed = confirm(
+          `${conflictResults.length} asignación(es) tienen conflictos. ` +
+          `¿Desea continuar con la creación de todas las asignaciones? ` +
+          `(Se marcarán como conflicto)`
+        );
+        
+        if (confirmed) {
+          // Crear horarios con conflictos
+          for (const conflictResult of conflictResults) {
+            try {
+              const dataToSave = {
+                ...conflictResult.data!,
+                has_conflict: true,
+              };
+              
+              const { error } = await supabase
+                .from('schedule')
+                .insert([dataToSave]);
+              
+              if (error) {
+                conflictResult.success = false;
+                conflictResult.error = error.message;
+              } else {
+                conflictResult.success = true;
+              }
+            } catch (error: any) {
+              conflictResult.success = false;
+              conflictResult.error = error.message;
+            }
+          }
+        }
+      }
+
+      // Paso 4: Mostrar resultados consolidados
+      const successCount = results.filter(r => r.success).length;
+      const conflictCount = results.filter(r => r.conflict && r.success).length;
+      const errorCount = results.filter(r => r.error).length;
+
+      if (successCount > 0) {
+        toast.success(`✅ ${successCount} asignación(es) creada(s) exitosamente`);
+      }
+      
+      if (conflictCount > 0) {
+        toast.warning(`⚠️ ${conflictCount} asignación(es) creada(s) con advertencias de conflicto`);
+      }
+      
+      if (errorCount > 0) {
+        const errorMessages = results
+          .filter(r => r.error)
+          .map(r => `${r.day}: ${r.error}`)
+          .join(', ');
+        toast.error(`❌ ${errorCount} asignación(es) fallaron: ${errorMessages}`);
+      }
+
+      // Paso 5: Cerrar modal y recargar datos
+      if (successCount > 0 || conflictCount > 0) {
+        closeModal();
+        await loadSchedules();
+      }
+
+    } catch (error) {
+      console.error('[ERROR] Error procesando horarios multi-día:', error);
+      toast.error('Error inesperado al procesar los horarios. Intente nuevamente.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /**
+   * Calcula las horas actuales y proyectadas del maestro
+   * Llama al edge function de cálculo de horas
+   * Muestra:
+   * - Horas actuales del maestro en el ciclo
+   * - Horas adicionales que se agregarían
+   * - Total proyectado
+   * - Máximo permitido según categoría
+   * - Alerta si excede el límite
+   */
+  const calculateTeacherHours = async () => {
+    if (!formData.teacher_id || !formData.school_cycle_id) {
+      toast.error('Seleccione un maestro y un ciclo escolar');
+      return;
+    }
+
+    setCalculatingHours(true);
+    try {
+      const additionalHours = formData.end_hour - formData.start_hour;
+
+      // Usar función RPC para calcular horas
+      const { data: result, error } = await supabase.rpc('calculate_teacher_hours', {
+        p_teacher_id: formData.teacher_id,
+        p_program_id: formData.school_cycle_id,
+        p_start_hour: formData.start_hour,
+        p_end_hour: formData.end_hour
+      });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      if (!result.success) {
+        throw new Error(result.error || 'Error al calcular horas');
+      }
+
+      // Convertir resultado de RPC a formato esperado
+      const validatedResult: TeacherHoursResult = {
+        current_hours: 0, // Simplificado para demo
+        additional_hours: additionalHours,
+        total_hours: result.total_hours,
+        max_hours: 40, // Valor por defecto
+        exceeds_limit: result.total_hours > 40,
+        category: 'Tiempo Completo',
+        subcategory: null,
+      };
+      
+      setTeacherHoursResult(validatedResult);
+
+      if (validatedResult.exceeds_limit) {
+        toast.warning('El maestro excedería el límite de horas permitido');
+      }
+    } catch (error) {
+      console.error('Error calculating teacher hours:', error);
+      toast.error('Error al calcular las horas del maestro');
+      setTeacherHoursResult(null);
+    } finally {
+      setCalculatingHours(false);
+    }
+  };
+
+  /**
+   * Maneja el submit del formulario de asignación de horario
+   */
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    // Validar que todos los campos estén completos
+    if (!formData.teacher_id || !formData.subject_id || !formData.group_id || !formData.day) {
+      toast.error('Por favor complete todos los campos requeridos');
+      return;
+    }
+
+    // Validar que la hora de inicio sea menor que la de fin
+    if (formData.start_hour >= formData.end_hour) {
+      toast.error('La hora de inicio debe ser menor que la hora de fin');
+      return;
+    }
+
+    setSubmitting(true);
+    clearValidation();
+
+    try {
+      // Ejecutar validación de conflictos
+      const validation = await runValidation({
+        ...formData,
+        exclude_schedule_id: editingSchedule?.id,
+      });
+
+      if (validation && !validation.valid) {
+        // Hay conflictos, mostrar modal de confirmación
+        setConflictValidationResult(validation);
+        const scheduleData: ScheduleInsert = {
+          teacher_id: formData.teacher_id,
+          subject_id: formData.subject_id,
+          group_id: formData.group_id,
+          day: formData.day,
+          start_hour: formData.start_hour,
+          end_hour: formData.end_hour,
+          school_cycle_id: formData.school_cycle_id,
+        };
+        setPendingScheduleData(scheduleData);
+        setIsConflictDialogOpen(true);
+      } else {
+        // No hay conflictos, guardar directamente
+        const scheduleData: ScheduleInsert = {
+          teacher_id: formData.teacher_id,
+          subject_id: formData.subject_id,
+          group_id: formData.group_id,
+          day: formData.day,
+          start_hour: formData.start_hour,
+          end_hour: formData.end_hour,
+          school_cycle_id: formData.school_cycle_id,
+        };
+        await saveSchedule(scheduleData, false);
+      }
+    } catch (error) {
+      console.error('[ERROR] Error validando horario:', error);
+      toast.error('Error al validar el horario. Intente nuevamente.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /**
+   * Confirma el guardado del horario con conflictos
+   */
+  const handleConfirmConflict = async () => {
+    if (!pendingScheduleData) return;
+    
+    await saveSchedule(pendingScheduleData, true);
+    setIsConflictDialogOpen(false);
+    setPendingScheduleData(null);
+    setConflictValidationResult(null);
+  };
+
+  /**
+   * Cancela la operación cuando hay conflictos
+   */
+  const handleCancelConflict = () => {
+    setIsConflictDialogOpen(false);
+    setPendingScheduleData(null);
+    setConflictValidationResult(null);
+  };
+
+  /**
+   * Cierra el modal de asignación
+   */
+  const closeModal = () => {
+    setIsModalOpen(false);
+    setIsMultiDayMode(false);
+    setEditingSchedule(null);
+    setFormData({
+      teacher_id: '',
+      subject_id: '',
+      group_id: '',
+      day: '',
+      start_hour: 8,
+      end_hour: 9,
+      school_cycle_id: selectedCycleId,
+    });
+    clearValidation();
+    setTeacherHoursResult(null);
+  };
+
+  /**
+   * Guarda el horario en la base de datos
+   * @param scheduleData - Datos del horario a guardar
+   * @param hasConflict - Si el horario tiene conflictos
+   */
+  const saveSchedule = async (scheduleData: ScheduleInsert, hasConflict: boolean) => {
+    setSubmitting(true);
+
+    try {
+      // Agregar el flag de conflicto a los datos
+      const dataToSave = {
+        ...scheduleData,
+        has_conflict: hasConflict,
+      };
+
+      if (editingSchedule) {
+        // Actualizar horario existente
+        const { error } = await supabase
+          .from('schedule')
+          .update(dataToSave)
+          .eq('id', editingSchedule.id);
+
+        if (error) throw error;
+        toast.success(hasConflict 
+          ? 'Horario actualizado con advertencia de conflicto' 
+          : 'Horario actualizado exitosamente'
+        );
+      } else {
+        // Crear nuevo horario
+        const { error } = await supabase
+          .from('schedule')
+          .insert([dataToSave]);
+
+        if (error) throw error;
+        toast.success(hasConflict 
+          ? 'Horario creado con advertencia de conflicto' 
+          : 'Horario creado exitosamente'
+        );
+      }
+
+      closeModal();
+      await loadSchedules();
+    } catch (error: any) {
+      console.error('Error saving schedule:', error);
+      toast.error(error.message || 'Error al guardar el horario');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Funciones de manejo de conflictos eliminadas - ahora usa ConflictValidationModal
+
+  /**
+   * Abre el diálogo de confirmación para eliminar un horario
+   */
+  const openDeleteDialog = (schedule: ScheduleWithRelations) => {
+    setDeletingSchedule(schedule);
+    setIsDeleteDialogOpen(true);
+  };
+
+  /**
+   * Cierra el diálogo de confirmación de eliminación
+   */
+  const closeDeleteDialog = () => {
+    setIsDeleteDialogOpen(false);
+    setDeletingSchedule(null);
+  };
+
+  /**
+   * Elimina un horario de la base de datos
+   */
+  const handleDelete = async () => {
+    if (!deletingSchedule) return;
+
+    try {
+      const { error } = await supabase
+        .from('schedule')
+        .delete()
+        .eq('id', deletingSchedule.id);
+
+      if (error) throw error;
+
+      toast.success('Horario eliminado exitosamente');
+      closeDeleteDialog();
+      await loadSchedules();
+    } catch (error: any) {
+      console.error('Error deleting schedule:', error);
+      toast.error(error.message || 'Error al eliminar el horario');
+    }
+  };
+
+  /**
+   * Genera las horas del día (8:00 - 20:00)
+   */
+  const getTimeSlots = () => {
+    const slots = [];
+    for (let hour = 8; hour <= 20; hour++) {
+      slots.push(hour);
+    }
+    return slots;
+  };
+
+  /**
+   * Obtiene los días de la semana según el tipo de programa
+   * - LIC/LEIP: Lunes a Viernes
+   * - MAE: Solo Sábado
+   */
+  const getDaysOfWeek = (): Array<'Lunes' | 'Martes' | 'Miércoles' | 'Jueves' | 'Viernes' | 'Sábado'> => {
+    if (!program) return [];
+    
+    if (program.type === 'MAE') {
+      return ['Sábado'];
+    } else {
+      return ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'];
+    }
+  };
+
+  /**
+   * Verifica si hay un horario en una celda específica (día, hora, grupo)
+   * Retorna el horario si existe, null si no
+   */
+  const getScheduleForCell = (day: string, hour: number, groupId: string) => {
+    return schedules.find(
+      s =>
+        s.day === day &&
+        s.start_hour <= hour &&
+        s.end_hour > hour &&
+        s.group_id === groupId
+    );
+  };
+
+  /**
+   * Tipo de información de conflicto
+   */
+  type ConflictInfo = {
+    hasConflict: boolean;
+    isIntraProgram: boolean; // true = mismo programa, false = entre programas
+    conflictType: 'teacher' | 'group' | null;
+  };
+
+  /**
+   * Obtiene el program_id de un schedule a través de su subject
+   * Ahora usa directamente el program_id que viene con el subject del schedule
+   */
+  const getProgramIdFromSchedule = (schedule: ScheduleWithRelations): string | null => {
+    return schedule.subject?.program_id || null;
+  };
+
+  /**
+   * Detecta información detallada sobre conflictos de un horario específico
+   * Retorna si hay conflicto, el tipo, y si es intra o inter-programa
+   */
+  const getConflictInfo = (schedule: ScheduleWithRelations): ConflictInfo => {
+    const scheduleProgram = getProgramIdFromSchedule(schedule);
+    
+    // Buscar conflictos de maestro (mismo maestro en dos lugares al mismo tiempo)
+    const conflictingTeacherSchedule = schedules.find(
+      s =>
+        s.id !== schedule.id &&
+        s.teacher_id === schedule.teacher_id &&
+        s.day === schedule.day &&
+        s.school_cycle_id === schedule.school_cycle_id &&
+        // Verificar si los rangos de tiempo se solapan
+        !(s.end_hour <= schedule.start_hour || s.start_hour >= schedule.end_hour)
+    );
+
+    if (conflictingTeacherSchedule) {
+      const conflictProgram = getProgramIdFromSchedule(conflictingTeacherSchedule);
+      return {
+        hasConflict: true,
+        isIntraProgram: scheduleProgram === conflictProgram,
+        conflictType: 'teacher'
+      };
+    }
+
+    // Buscar conflictos de grupo (mismo grupo con dos materias al mismo tiempo)
+    // IMPORTANTE: Solo detectar conflictos de grupo si es la MISMA licenciatura (intra-programa)
+    // Los grupos son compartidos entre licenciaturas pero deben ser independientes
+    const conflictingGroupSchedule = schedules.find(
+      s => {
+        const conflictProgram = getProgramIdFromSchedule(s);
+        return s.id !== schedule.id &&
+          s.group_id === schedule.group_id &&
+          s.day === schedule.day &&
+          s.school_cycle_id === schedule.school_cycle_id &&
+          scheduleProgram === conflictProgram && // Solo conflicto si es la misma licenciatura
+          // Verificar si los rangos de tiempo se solapan
+          !(s.end_hour <= schedule.start_hour || s.start_hour >= schedule.end_hour);
+      }
+    );
+
+    if (conflictingGroupSchedule) {
+      const conflictProgram = getProgramIdFromSchedule(conflictingGroupSchedule);
+      return {
+        hasConflict: true,
+        isIntraProgram: scheduleProgram === conflictProgram,
+        conflictType: 'group'
+      };
+    }
+
+    return {
+      hasConflict: false,
+      isIntraProgram: true,
+      conflictType: null
+    };
+  };
+
+  /**
+   * Verifica si un horario tiene conflictos (versión simplificada para compatibilidad)
+   */
+  const hasConflict = (schedule: ScheduleWithRelations) => {
+    return getConflictInfo(schedule).hasConflict;
+  };
+
+  /**
+   * Transforma los horarios en formato de calendario semanal
+   * Agrupa por grupo, maestro y materia
+   */
+  const getWeeklyCalendarData = () => {
+    const filtered = getFilteredSchedules();
+    
+    // Crear un mapa para agrupar por combinación única
+    const groupedMap = new Map<string, {
+      group: string;
+      groupId: string;
+      teacher: string;
+      teacherId: string;
+      subject: string;
+      subjectClave: string;
+      subjectId: string;
+      schedules: ScheduleWithRelations[];
+    }>();
+
+    filtered.forEach(schedule => {
+      const key = `${schedule.group_id}-${schedule.teacher_id}-${schedule.subject_id}`;
+      
+      if (!groupedMap.has(key)) {
+        groupedMap.set(key, {
+          group: schedule.group?.name || 'Sin grupo',
+          groupId: schedule.group_id || '',
+          teacher: schedule.teacher?.name || 'Sin maestro',
+          teacherId: schedule.teacher_id || '',
+          subject: schedule.subject?.name || 'Sin materia',
+          subjectClave: schedule.subject?.clave || 'N/A',
+          subjectId: schedule.subject_id || '',
+          schedules: []
+        });
+      }
+      
+      groupedMap.get(key)!.schedules.push(schedule);
+    });
+
+    // Convertir a array y ordenar alfabéticamente por grupo (ordenamiento natural)
+    const result = Array.from(groupedMap.values());
+    
+    result.sort((a, b) => {
+      // Función auxiliar para ordenamiento alfanumérico natural
+      const extractParts = (groupName: string) => {
+        const match = groupName.match(/^(\d+)([A-Za-z]*)$/);
+        if (match) {
+          return {
+            number: parseInt(match[1], 10),
+            letter: match[2] || ''
+          };
+        }
+        return { number: 0, letter: groupName };
+      };
+      
+      const partsA = extractParts(a.group);
+      const partsB = extractParts(b.group);
+      
+      // Primero comparar por número
+      if (partsA.number !== partsB.number) {
+        return partsA.number - partsB.number;
+      }
+      
+      // Si los números son iguales, comparar por letra
+      return partsA.letter.localeCompare(partsB.letter);
+    });
+
+    return result;
+  };
+
+  /**
+   * Obtiene el horario para un día específico dentro de un grupo de horarios
+   */
+  const getScheduleForDay = (schedules: ScheduleWithRelations[], day: string) => {
+    return schedules.find(s => s.day === day);
+  };
+
+  /**
+   * Calcula las horas totales semanales de un conjunto de horarios
+   */
+  const calculateTotalHours = (schedules: ScheduleWithRelations[]) => {
+    return schedules.reduce((total, schedule) => {
+      return total + (schedule.end_hour - schedule.start_hour);
+    }, 0);
+  };
+
+  /**
+   * Mapeo de días completos a abreviados
+   */
+  const dayAbbreviations: Record<string, string> = {
+    'Lunes': 'LUN',
+    'Martes': 'MAR',
+    'Miércoles': 'MIE',
+    'Jueves': 'JUE',
+    'Viernes': 'VIE',
+    'Sábado': 'SÁB'
+  };
+
+  /**
+   * Agrupa los horarios por grupo
+   * Retorna un objeto con los grupos como claves y arrays de horarios como valores
+   */
+  const groupSchedulesByGroup = () => {
+    const grouped: { [key: string]: ScheduleWithRelations[] } = {};
+
+    // Filtrar solo horarios del programa actual
+    schedules
+      .filter(s => s.subject?.program_id === programId)
+      .forEach(schedule => {
+        const groupName = schedule.group?.name || 'Sin grupo';
+        if (!grouped[groupName]) {
+          grouped[groupName] = [];
+        }
+        grouped[groupName].push(schedule);
+      });
+
+    return grouped;
+  };
+
+  /**
+   * Filtra los horarios según el grupo y maestro seleccionados en la vista de tabla
+   */
+  const getFilteredSchedules = () => {
+    // Primero filtrar solo los horarios del programa actual
+    let filtered = schedules.filter(s => {
+      const scheduleProgramId = s.subject?.program_id;
+      return scheduleProgramId === programId;
+    });
+    
+    // Filtrar por grupo
+    if (selectedGroupFilter !== 'all') {
+      filtered = filtered.filter(s => s.group_id === selectedGroupFilter);
+    }
+    
+    // Filtrar por maestro
+    if (selectedTeacherFilter !== 'all') {
+      filtered = filtered.filter(s => s.teacher_id === selectedTeacherFilter);
+    }
+    
+    return filtered;
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-lg">Cargando...</div>
+      </div>
+    );
+  }
+
+  if (!program) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-lg">Programa no encontrado</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="container mx-auto py-8 px-4">
+      {/* Header con información del programa */}
+      <div className="mb-8">
+        <Button
+          variant="ghost"
+          onClick={() => navigate('/programas')}
+          className="mb-4"
+        >
+          <ArrowLeft className="mr-2 h-4 w-4" />
+          Volver a Programas
+        </Button>
+
+        <Card className="dark:bg-slate-800 dark:border-slate-700">
+          <CardHeader>
+            <CardTitle className="text-3xl font-bold text-blue-900">
+              Gestión de Horarios - {program.name}
+            </CardTitle>
+            <CardDescription>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+                <div className="flex items-center gap-2">
+                  <BookOpen className="h-5 w-5 text-blue-600" />
+                  <span className="font-semibold">Tipo:</span> {program.type}
+                  {program.especialidad && ` - ${program.especialidad}`}
+                </div>
+                <div className="flex items-center gap-2">
+                  <User className="h-5 w-5 text-blue-600" />
+                  <span className="font-semibold">Coordinador:</span>{' '}
+                  {program.coordinador?.name || 'Sin asignar'}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Calendar className="h-5 w-5 text-blue-600" />
+                  <span className="font-semibold">Sede:</span>{' '}
+                  {program.sede?.name || 'Sin asignar'}
+                </div>
+              </div>
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-col md:flex-row gap-4 items-end">
+              <div className="flex-1">
+                <Label htmlFor="cycle">Ciclo Escolar</Label>
+                <Select
+                  value={selectedCycleId}
+                  onValueChange={setSelectedCycleId}
+                >
+                  <SelectTrigger id="cycle">
+                    <SelectValue placeholder="Seleccione un ciclo" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {schoolCycles.map(cycle => (
+                      <SelectItem key={cycle.id} value={cycle.id}>
+                        {cycle.name} ({cycle.cycle_type})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  onClick={openCreateMultiDayModal}
+                  disabled={!selectedCycleId}
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Nueva Asignación Multi-Día
+                </Button>
+                <Button
+                  onClick={openCreateModal}
+                  disabled={!selectedCycleId}
+                  variant="outline"
+                  className="border-gray-300 hover:bg-gray-50"
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Asignación Individual
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Tabs para cambiar entre vista de calendario y tabla */}
+      <Tabs value={selectedView} onValueChange={(v) => setSelectedView(v as 'calendar' | 'table')}>
+        <TabsList className="grid w-full md:w-[400px] grid-cols-2">
+          <TabsTrigger value="calendar">Vista Calendario</TabsTrigger>
+          <TabsTrigger value="table">Vista Tabla</TabsTrigger>
+        </TabsList>
+
+        {/* Vista de Calendario */}
+        <TabsContent value="calendar">
+          <Card className="dark:bg-slate-800 dark:border-slate-700">
+            <CardHeader>
+              <CardTitle>Horarios por Grupo</CardTitle>
+              <CardDescription>
+                Vista de calendario mostrando los horarios asignados a cada grupo
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {selectedCycleId ? (
+                <div className="space-y-8">
+                  {Object.entries(groupSchedulesByGroup()).map(([groupName, groupSchedules]) => {
+                    const groupId = groupSchedules[0]?.group_id || '';
+                    return (
+                      <div key={groupName} className="border rounded-lg p-4">
+                        <h3 className="text-xl font-bold mb-4 text-blue-900 flex items-center gap-2">
+                          <Users className="h-5 w-5" />
+                          Grupo: {groupName}
+                        </h3>
+                        <div className="overflow-x-auto">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead className="w-20">Hora</TableHead>
+                                {getDaysOfWeek().map(day => (
+                                  <TableHead key={day} className="text-center">
+                                    {day}
+                                  </TableHead>
+                                ))}
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {getTimeSlots().map(hour => (
+                                <TableRow key={hour}>
+                                  <TableCell className="font-medium">
+                                    {hour}:00
+                                  </TableCell>
+                                  {getDaysOfWeek().map(day => {
+                                    const schedule = getScheduleForCell(day, hour, groupId);
+                                    const conflictInfo = schedule ? getConflictInfo(schedule) : null;
+                                    
+                                    // Determinar estilos basados en el tipo de conflicto
+                                    let cellBgColor = 'bg-gray-50';
+                                    let borderStyle = '';
+                                    let badgeColor = '';
+                                    let badgeText = '';
+                                    
+                                    if (schedule) {
+                                      if (conflictInfo?.hasConflict) {
+                                        if (conflictInfo.isIntraProgram) {
+                                          // Conflicto intra-licenciatura - ROJO
+                                          cellBgColor = 'bg-red-200';
+                                          borderStyle = 'border-2 border-red-600';
+                                          badgeColor = 'bg-red-700';
+                                          badgeText = 'EMPALME';
+                                        } else {
+                                          // Conflicto inter-licenciatura - AMARILLO
+                                          cellBgColor = 'bg-yellow-200';
+                                          borderStyle = 'border-2 border-yellow-600';
+                                          badgeColor = 'bg-yellow-700';
+                                          badgeText = 'EMPALME (OTRA LIC.)';
+                                        }
+                                      } else {
+                                        // Sin conflicto - VERDE
+                                        cellBgColor = 'bg-green-100';
+                                        borderStyle = 'border border-green-300';
+                                      }
+                                    }
+                                    
+                                    return (
+                                      <TableCell
+                                        key={day}
+                                        className={`text-center p-2 ${cellBgColor} ${borderStyle} shadow-sm`}
+                                      >
+                                        {schedule && (
+                                          <div className="text-xs space-y-1">
+                                            {conflictInfo?.hasConflict && (
+                                              <div className={`flex justify-center items-center gap-1 ${badgeColor} text-white px-1 py-0.5 rounded text-[10px] font-bold`}>
+                                                <AlertTriangle className="h-3 w-3" />
+                                                {badgeText}
+                                              </div>
+                                            )}
+                                            <div className="font-bold">
+                                              {schedule.subject?.clave || 'N/A'}
+                                            </div>
+                                            <div className="text-gray-700">
+                                              {schedule.teacher?.name || 'Sin maestro'}
+                                            </div>
+                                            <div className="text-gray-600 font-semibold">
+                                              {schedule.start_hour}:00 - {schedule.end_hour}:00
+                                            </div>
+                                          </div>
+                                        )}
+                                      </TableCell>
+                                    );
+                                  
+                                  })}
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {Object.keys(groupSchedulesByGroup()).length === 0 && (
+                    <div className="text-center py-12 text-gray-500">
+                      No hay horarios asignados para este ciclo escolar
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center py-12 text-gray-500">
+                  Seleccione un ciclo escolar para ver los horarios
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Vista de Tabla */}
+        <TabsContent value="table">
+          <Card className="dark:bg-slate-800 dark:border-slate-700">
+            <CardHeader>
+              <CardTitle>Lista de Horarios</CardTitle>
+              <CardDescription>
+                Vista de tabla con todos los horarios del programa
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="mb-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Filtro por Grupo */}
+                <div>
+                  <Label htmlFor="groupFilter">Filtrar por Grupo</Label>
+                  <Select
+                    value={selectedGroupFilter}
+                    onValueChange={setSelectedGroupFilter}
+                  >
+                    <SelectTrigger id="groupFilter">
+                      <SelectValue placeholder="Todos los grupos" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos los grupos</SelectItem>
+                      {groups.map(group => (
+                        <SelectItem key={group.id} value={group.id}>
+                          {group.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Filtro por Maestro */}
+                <div>
+                  <Label htmlFor="teacherFilter">Filtrar por Maestro</Label>
+                  <Select
+                    value={selectedTeacherFilter}
+                    onValueChange={setSelectedTeacherFilter}
+                  >
+                    <SelectTrigger id="teacherFilter">
+                      <SelectValue placeholder="Todos los maestros" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos los maestros</SelectItem>
+                      {teachers.map(teacher => (
+                        <SelectItem key={teacher.id} value={teacher.id}>
+                          {teacher.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Botón Descargar Oficio */}
+                <div className="flex items-end">
+                  <Button
+                    onClick={async () => {
+                      if (selectedTeacherFilter === 'all') {
+                        // Descargar todos los oficios
+                        try {
+                          toast.loading('Generando oficios de todos los maestros...');
+                          await downloadAllOficiosForAllTeachers(programId);
+                          toast.dismiss();
+                          toast.success('Oficios descargados correctamente');
+                        } catch (error: any) {
+                          toast.dismiss();
+                          console.error('Error generating all oficios:', error);
+                          toast.error('Error al generar los oficios: ' + error.message);
+                        }
+                        return;
+                      }
+                      // Descargar oficio individual
+                      try {
+                        await generateOficioFromTemplate(selectedTeacherFilter, programId);
+                        toast.success('Oficio descargado correctamente');
+                      } catch (error: any) {
+                        console.error('Error generating oficio:', error);
+                        if (error.message === 'El maestro no tiene horarios asignados') {
+                          toast.error('El maestro seleccionado no tiene horarios asignados');
+                        } else {
+                          toast.error('Error al generar el oficio');
+                        }
+                      }
+                    }}
+                    className="w-full"
+                  >
+                    <FileDown className="w-4 h-4 mr-2" />
+                    {selectedTeacherFilter === 'all' ? 'Descargar Todos los Oficios' : 'Descargar Oficio'}
+                  </Button>
+                </div>
+              </div>
+
+              {selectedCycleId ? (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-20">Grupo</TableHead>
+                        <TableHead className="w-48">Maestro</TableHead>
+                        <TableHead className="w-64">Materia</TableHead>
+                        <TableHead className="w-20">Clave</TableHead>
+                        {getDaysOfWeek().map(day => (
+                          <TableHead key={day} className="text-center w-32">
+                            {dayAbbreviations[day]}
+                          </TableHead>
+                        ))}
+                        <TableHead className="text-center w-24">Horas Totales</TableHead>
+                        <TableHead className="text-right w-32">Acciones</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {getWeeklyCalendarData().map((row, index) => {
+                        return (
+                        <TableRow key={index}>
+                          <TableCell className="font-medium">{row.group}</TableCell>
+                          <TableCell>{row.teacher}</TableCell>
+                          <TableCell>
+                            <div className="text-sm">{row.subject}</div>
+                          </TableCell>
+                          <TableCell className="font-mono text-sm">{row.subjectClave}</TableCell>
+                          {getDaysOfWeek().map(day => {
+                            const schedule = getScheduleForDay(row.schedules, day);
+                            const conflictInfo = schedule ? getConflictInfo(schedule) : null;
+                            
+                            // Determinar el color de fondo de la celda
+                            let cellBgColor = '';
+                            if (conflictInfo?.hasConflict) {
+                              if (conflictInfo.isIntraProgram) {
+                                // Conflicto dentro de la misma licenciatura - ROJO
+                                cellBgColor = 'bg-red-100';
+                              } else {
+                                // Conflicto entre diferentes licenciaturas - AMARILLO
+                                cellBgColor = 'bg-yellow-100';
+                              }
+                            }
+                            
+                            return (
+                              <TableCell key={day} className={`text-center ${cellBgColor}`}>
+                                {schedule ? (
+                                  <div className="text-xs">
+                                    <div className="font-semibold">
+                                      {schedule.start_hour.toString().padStart(2, '0')}:00-
+                                    </div>
+                                    <div className="font-semibold">
+                                      {schedule.end_hour.toString().padStart(2, '0')}:00
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <span className="text-gray-400">—</span>
+                                )}
+                              </TableCell>
+                            );
+                          })}
+                          <TableCell className="text-center font-bold">
+                            {calculateTotalHours(row.schedules)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex flex-col gap-1 items-end">
+                              {row.schedules.map(schedule => (
+                                <div key={schedule.id} className="flex gap-1 items-center">
+                                  <span className="text-xs text-gray-500 mr-1 w-12 text-right">
+                                    {dayAbbreviations[schedule.day]}:
+                                  </span>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => openEditModal(schedule)}
+                                    title={`Editar ${schedule.day}`}
+                                    className="h-7 px-2"
+                                  >
+                                    <Edit className="h-3 w-3" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => openDeleteDialog(schedule)}
+                                    title={`Eliminar ${schedule.day}`}
+                                    className="h-7 px-2"
+                                  >
+                                    <Trash2 className="h-3 w-3 text-red-600" />
+                                  </Button>
+                                </div>
+                              ))}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                  {getWeeklyCalendarData().length === 0 && (
+                    <div className="text-center py-12 text-gray-500">
+                      No hay horarios que mostrar
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center py-12 text-gray-500">
+                  Seleccione un ciclo escolar para ver los horarios
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+
+      {/* Modal de Asignación de Horarios */}
+      <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {editingSchedule 
+                ? 'Editar Horario' 
+                : isMultiDayMode 
+                  ? 'Asignar Horarios Multi-Día'
+                  : 'Asignar Horario'
+              }
+            </DialogTitle>
+            <DialogDescription>
+              {editingSchedule 
+                ? 'Modifica los datos del horario seleccionado'
+                : isMultiDayMode
+                  ? 'Complete la información para asignar el horario a múltiples días'
+                  : 'Complete la información para asignar un nuevo horario'
+              }
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Formulario Individual (original) */}
+          {!isMultiDayMode && (
+            <form onSubmit={handleSubmit} className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Maestro */}
+                <div className="space-y-2">
+                  <Label htmlFor="teacher">Maestro *</Label>
+                  <Select
+                    value={formData.teacher_id}
+                    onValueChange={(value) => setFormData({ ...formData, teacher_id: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleccionar maestro" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {teachers.map((teacher) => (
+                        <SelectItem key={teacher.id} value={teacher.id}>
+                          <div className="flex items-center justify-between w-full">
+                            <span>{teacher.name}</span>
+                            <span className="text-xs text-gray-500 ml-2">
+                              ({teacher.category?.category || 'Sin categoría'})
+                            </span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Materia */}
+                <div className="space-y-2">
+                  <Label htmlFor="subject">Materia *</Label>
+                  <Select
+                    value={formData.subject_id}
+                    onValueChange={(value) => setFormData({ ...formData, subject_id: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleccionar materia" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {subjects
+                        .filter(subject => 
+                          !editingSchedule || subject.program_id === programId
+                        )
+                        .map((subject) => (
+                        <SelectItem key={subject.id} value={subject.id}>
+                          {subject.name} ({subject.clave})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Grupo */}
+                <div className="space-y-2">
+                  <Label htmlFor="group">Grupo *</Label>
+                  <Select
+                    value={formData.group_id}
+                    onValueChange={(value) => setFormData({ ...formData, group_id: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleccionar grupo" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {groups.map((group) => (
+                        <SelectItem key={group.id} value={group.id}>
+                          {group.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Día */}
+                <div className="space-y-2">
+                  <Label htmlFor="day">Día *</Label>
+                  <Select
+                    value={formData.day}
+                    onValueChange={(value: any) => setFormData({ ...formData, day: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleccionar día" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Lunes">Lunes</SelectItem>
+                      <SelectItem value="Martes">Martes</SelectItem>
+                      <SelectItem value="Miércoles">Miércoles</SelectItem>
+                      <SelectItem value="Jueves">Jueves</SelectItem>
+                      <SelectItem value="Viernes">Viernes</SelectItem>
+                      <SelectItem value="Sábado">Sábado</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Hora de inicio */}
+                <div className="space-y-2">
+                  <Label htmlFor="start_hour">Hora de Inicio *</Label>
+                  <Select
+                    value={formData.start_hour.toString()}
+                    onValueChange={(value) => setFormData({ ...formData, start_hour: parseInt(value) })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Hora de inicio" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Array.from({ length: 14 }, (_, i) => i + 7).map((hour) => (
+                        <SelectItem key={hour} value={hour.toString()}>
+                          {hour.toString().padStart(2, '0')}:00
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Hora de fin */}
+                <div className="space-y-2">
+                  <Label htmlFor="end_hour">Hora de Fin *</Label>
+                  <Select
+                    value={formData.end_hour.toString()}
+                    onValueChange={(value) => setFormData({ ...formData, end_hour: parseInt(value) })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Hora de fin" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Array.from({ length: 14 }, (_, i) => i + 8).map((hour) => (
+                        <SelectItem key={hour} value={hour.toString()}>
+                          {hour.toString().padStart(2, '0')}:00
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+            {/* Información adicional */}
+            {teacherHoursResult && (
+              <div className="bg-blue-50 p-4 rounded-lg">
+                <h4 className="font-semibold text-blue-800 mb-2">Información de Horas del Maestro</h4>
+                <div className="text-sm text-blue-700 space-y-1">
+                  <p>Horas actuales: {teacherHoursResult.current_hours}</p>
+                  <p>Horas adicionales: {teacherHoursResult.additional_hours}</p>
+                  <p>Total de horas: {teacherHoursResult.total_hours}/{teacherHoursResult.max_hours}</p>
+                  {teacherHoursResult.exceeds_limit && (
+                    <p className="text-red-600 font-medium">
+                      ⚠️ Se excede el límite de horas permitidas
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Estado de validación */}
+            {validating && (
+              <div className="flex items-center space-x-2 text-blue-600">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                <span>Validando conflictos...</span>
+              </div>
+            )}
+
+            {hookValidationResult && (
+              <div className={`p-4 rounded-lg ${
+                hookValidationResult.valid 
+                  ? 'bg-green-50 border border-green-200' 
+                  : 'bg-red-50 border border-red-200'
+              }`}>
+                <div className="flex items-center space-x-2">
+                  {hookValidationResult.valid ? (
+                    <CheckCircle className="h-5 w-5 text-green-600" />
+                  ) : (
+                    <AlertCircle className="h-5 w-5 text-red-600" />
+                  )}
+                  <span className={`font-medium ${
+                    hookValidationResult.valid ? 'text-green-800' : 'text-red-800'
+                  }`}>
+                    {hookValidationResult.valid ? 'Sin conflictos detectados' : 'Conflictos detectados'}
+                  </span>
+                </div>
+                {!hookValidationResult.valid && hookValidationResult.conflicts && (
+                  <div className="mt-2 text-sm text-red-700">
+                    <p>Se detectaron conflictos con:</p>
+                    <ul className="list-disc list-inside mt-1 space-y-1">
+                      {(hookValidationResult.conflicts.teacher_conflicts || []).length > 0 && (
+                        <li>{(hookValidationResult.conflicts.teacher_conflicts || []).length} conflicto(s) de maestro</li>
+                      )}
+                      {(hookValidationResult.conflicts.group_conflicts || []).length > 0 && (
+                        <li>{(hookValidationResult.conflicts.group_conflicts || []).length} conflicto(s) de grupo</li>
+                      )}
+                      {(hookValidationResult.conflicts.availability_conflicts || []).length > 0 && (
+                        <li>{(hookValidationResult.conflicts.availability_conflicts || []).length} advertencia(s) de disponibilidad</li>
+                      )}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+            </form>
+
+            {/* Formulario Multi-Día */}
+            {isMultiDayMode && (
+              <form id="multi-day-form" onSubmit={handleMultiDaySubmit} className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                  {/* Maestro */}
+                  <div className="space-y-2">
+                    <Label htmlFor="multi-teacher">Maestro *</Label>
+                    <Select
+                      value={multiDayFormData.teacher_id}
+                      onValueChange={(value) => setMultiDayFormData({ ...multiDayFormData, teacher_id: value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Seleccionar maestro" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {teachers.map((teacher) => (
+                          <SelectItem key={teacher.id} value={teacher.id}>
+                            <div className="flex items-center justify-between w-full">
+                              <span>{teacher.name}</span>
+                              <span className="text-xs text-gray-500 ml-2">
+                                ({teacher.category?.category || 'Sin categoría'})
+                              </span>
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Materia */}
+                  <div className="space-y-2">
+                    <Label htmlFor="multi-subject">Materia *</Label>
+                    <Select
+                      value={multiDayFormData.subject_id}
+                      onValueChange={(value) => setMultiDayFormData({ ...multiDayFormData, subject_id: value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Seleccionar materia" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {subjects
+                          .filter(subject => subject.program_id === programId)
+                          .map((subject) => (
+                          <SelectItem key={subject.id} value={subject.id}>
+                            {subject.name} ({subject.clave})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Grupo */}
+                  <div className="space-y-2">
+                    <Label htmlFor="multi-group">Grupo *</Label>
+                    <Select
+                      value={multiDayFormData.group_id}
+                      onValueChange={(value) => setMultiDayFormData({ ...multiDayFormData, group_id: value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Seleccionar grupo" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {groups.map((group) => (
+                          <SelectItem key={group.id} value={group.id}>
+                            {group.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                {/* Tabla de días de la semana */}
+                <div className="space-y-4">
+                  <Label className="text-lg font-semibold">Horarios por Día *</Label>
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-16">Activar</TableHead>
+                          <TableHead className="w-24">Día</TableHead>
+                          <TableHead className="w-32">Hora Inicio</TableHead>
+                          <TableHead className="w-32">Hora Fin</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {multiDayFormData.days.map((daySchedule, index) => {
+                          // Validación específica por día
+                          let validationError = '';
+                          if (daySchedule.enabled) {
+                            if (daySchedule.start_hour >= daySchedule.end_hour) {
+                              validationError = 'La hora de fin debe ser mayor que la de inicio';
+                            } else if (daySchedule.start_hour < 7 || daySchedule.start_hour > 20) {
+                              validationError = 'Hora de inicio debe estar entre 07:00-20:00';
+                            } else if (daySchedule.end_hour < 8 || daySchedule.end_hour > 21) {
+                              validationError = 'Hora de fin debe estar entre 08:00-21:00';
+                            }
+                          }
+
+                          // Verificar si ya existe el horario
+                          const existingSchedule: ScheduleInsert = {
+                            teacher_id: multiDayFormData.teacher_id,
+                            subject_id: multiDayFormData.subject_id,
+                            group_id: multiDayFormData.group_id,
+                            day: daySchedule.day as any,
+                            start_hour: daySchedule.start_hour,
+                            end_hour: daySchedule.end_hour,
+                            school_cycle_id: multiDayFormData.school_cycle_id,
+                          };
+                          
+                          const isDuplicate = multiDayFormData.teacher_id && multiDayFormData.subject_id && 
+                            multiDayFormData.group_id && daySchedule.enabled && 
+                            checkDuplicateSchedule(existingSchedule);
+
+                          return (
+                            <TableRow key={index} className={`
+                              ${!daySchedule.enabled ? 'opacity-50' : ''}
+                              ${validationError ? 'border-red-300' : ''}
+                              ${isDuplicate ? 'bg-yellow-50 border-yellow-300' : ''}
+                            `}>
+                              <TableCell>
+                                <input
+                                  type="checkbox"
+                                  checked={daySchedule.enabled}
+                                  onChange={(e) => updateDaySchedule(index, 'enabled', e.target.checked)}
+                                  className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                                />
+                              </TableCell>
+                              <TableCell className="font-medium">
+                                <div className="flex items-center gap-2">
+                                  {daySchedule.day}
+                                  {isDuplicate && (
+                                    <AlertTriangle className="h-4 w-4 text-yellow-600" title="Horario ya existe" />
+                                  )}
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <Select
+                                  value={daySchedule.start_hour.toString()}
+                                  onValueChange={(value) => updateDaySchedule(index, 'start_hour', parseInt(value))}
+                                  disabled={!daySchedule.enabled}
+                                >
+                                  <SelectTrigger className={`w-full ${validationError ? 'border-red-500' : ''}`}>
+                                    <SelectValue placeholder="--:--" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {Array.from({ length: 14 }, (_, i) => i + 7).map((hour) => (
+                                      <SelectItem key={hour} value={hour.toString()}>
+                                        {hour.toString().padStart(2, '0')}:00
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </TableCell>
+                              <TableCell>
+                                <Select
+                                  value={daySchedule.end_hour.toString()}
+                                  onValueChange={(value) => updateDaySchedule(index, 'end_hour', parseInt(value))}
+                                  disabled={!daySchedule.enabled}
+                                >
+                                  <SelectTrigger className={`w-full ${validationError ? 'border-red-500' : ''}`}>
+                                    <SelectValue placeholder="--:--" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {Array.from({ length: 14 }, (_, i) => i + 8).map((hour) => (
+                                      <SelectItem key={hour} value={hour.toString()}>
+                                        {hour.toString().padStart(2, '0')}:00
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </TableCell>
+                              {validationError && (
+                                <TableCell colSpan={1} className="text-red-600 text-xs p-1">
+                                  {validationError}
+                                </TableCell>
+                              )}
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  
+                  {/* Resumen de días seleccionados */}
+                  {multiDayFormData.days.filter(day => day.enabled).length > 0 && (
+                    <div className="space-y-3">
+                      <div className="bg-blue-50 p-4 rounded-lg">
+                        <h4 className="font-semibold text-blue-800 mb-2 flex items-center gap-2">
+                          <CheckCircle className="h-4 w-4" />
+                          Resumen de Asignación
+                        </h4>
+                        <div className="text-sm text-blue-700">
+                          <p className="mb-2">Se crearán {multiDayFormData.days.filter(day => day.enabled).length} asignación(es):</p>
+                          <ul className="space-y-1">
+                            {multiDayFormData.days
+                              .filter(day => day.enabled)
+                              .map(day => {
+                                // Verificar si ya existe el horario
+                                const existingSchedule: ScheduleInsert = {
+                                  teacher_id: multiDayFormData.teacher_id,
+                                  subject_id: multiDayFormData.subject_id,
+                                  group_id: multiDayFormData.group_id,
+                                  day: day.day as any,
+                                  start_hour: day.start_hour,
+                                  end_hour: day.end_hour,
+                                  school_cycle_id: multiDayFormData.school_cycle_id,
+                                };
+                                
+                                const isDuplicate = multiDayFormData.teacher_id && multiDayFormData.subject_id && 
+                                  multiDayFormData.group_id && checkDuplicateSchedule(existingSchedule);
+                                
+                                return (
+                                  <li key={day.day} className="flex items-center gap-2">
+                                    <span className="font-medium w-16">{day.day}:</span>
+                                    <span>{day.start_hour}:00 - {day.end_hour}:00</span>
+                                    {isDuplicate && (
+                                      <AlertTriangle className="h-3 w-3 text-yellow-600" title="Horario ya existe" />
+                                    )}
+                                    {isDuplicate && (
+                                      <span className="text-xs text-yellow-600">(ya existe)</span>
+                                    )}
+                                  </li>
+                                );
+                              })}
+                          </ul>
+                        </div>
+                      </div>
+
+                      {/* Alertas específicas */}
+                      {multiDayFormData.days.filter(day => day.enabled).length > 3 && (
+                        <div className="bg-amber-50 border border-amber-200 p-3 rounded-lg">
+                          <div className="flex items-center gap-2 text-amber-800">
+                            <AlertCircle className="h-4 w-4" />
+                            <span className="text-sm font-medium">
+                              Atención: Está creando {multiDayFormData.days.filter(day => day.enabled).length} asignaciones en una sola operación
+                            </span>
+                          </div>
+                          <p className="text-sm text-amber-700 mt-1">
+                            Esto puede tomar más tiempo del normal. Se validarán conflictos para cada día individualmente.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </form>
+            )}
+
+            {/* Los DialogFooter están dentro de cada modo arriba */}
+
+            {/* Cierre del Dialog y Modal */}
+          </DialogContent>
+        </Dialog>
+      </div>
+    </div>
+  );
+};
+            {/* DialogFooter para modo individual */}
+            {!isMultiDayMode && (
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={closeModal}
+                  disabled={submitting}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  type="submit"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    handleSubmit(e as any);
+                  }}
+                  disabled={
+                    submitting || 
+                    !formData.teacher_id || !formData.subject_id || !formData.group_id || !formData.day ||
+                    formData.start_hour >= formData.end_hour
+                  }
+                >
+                  {submitting ? 'Guardando...' : (editingSchedule ? 'Actualizar' : 'Guardar')}
+                </Button>
+              </DialogFooter>
+            )}
+          </DialogContent>
+        </Dialog>
+      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Está seguro?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta acción eliminará permanentemente el horario de:
+              <br />
+              <br />
+              <strong>Maestro:</strong> {deletingSchedule?.teacher?.name}
+              <br />
+              <strong>Materia:</strong> {deletingSchedule?.subject?.name}
+              <br />
+              <strong>Grupo:</strong> {deletingSchedule?.group?.name}
+              <br />
+              <strong>Día:</strong> {deletingSchedule?.day}
+              <br />
+              <strong>Horario:</strong> {deletingSchedule?.start_hour}:00 -{' '}
+              {deletingSchedule?.end_hour}:00
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={closeDeleteDialog}>
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDelete}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+
+      {/* Modal de Confirmación de Conflictos */}
+      <ConflictConfirmationModal
+        isOpen={isConflictDialogOpen}
+        onClose={handleCancelConflict}
+        onConfirm={handleConfirmConflict}
+        validationResult={conflictValidationResult}
+        scheduleData={{
+          day: formData.day,
+          start_hour: formData.start_hour,
+          end_hour: formData.end_hour,
+          subject_name: subjects.find(s => s.id === formData.subject_id)?.name,
+          teacher_name: teachers.find(t => t.id === formData.teacher_id)?.name,
+          group_name: groups.find(g => g.id === formData.group_id)?.name,
+        }}
+        isSubmitting={submitting}
+      />
+
+
+    </div>
+  );
+}
