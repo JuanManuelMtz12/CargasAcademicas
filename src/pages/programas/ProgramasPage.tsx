@@ -47,9 +47,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Plus, Edit, Trash2, Clock, Users, BookOpen, Calendar } from 'lucide-react';
+import { Plus, Edit, Trash2, Clock, Users, BookOpen, Calendar, FileSpreadsheet } from 'lucide-react';
 import ManageTeachersModal from '@/components/ManageTeachersModal';
 import CalendarioAcademicoModal from '@/components/CalendarioAcademicoModal';
+import { downloadConcentradoExcel, ConcentradoRow } from '@/utils/concentradoExcel';
 
 type Program = Database['public']['Tables']['programs']['Row'];
 type ProgramInsert = Database['public']['Tables']['programs']['Insert'];
@@ -94,7 +95,8 @@ export default function ProgramasPage() {
   const [managingProgram, setManagingProgram] = useState<ProgramWithRelations | null>(null);
   const [isCalendarioModalOpen, setIsCalendarioModalOpen] = useState(false);
   const [calendarioProgram, setCalendarioProgram] = useState<ProgramWithRelations | null>(null);
-  
+  const [downloadingConcentrado, setDownloadingConcentrado] = useState(false);
+
   const [formData, setFormData] = useState<FormData>({
     name: '',
     type: 'LIC',
@@ -122,7 +124,6 @@ export default function ProgramasPage() {
 
   const loadPrograms = async () => {
     try {
-      // Obtener programas con datos relacionados
       let programsQuery = supabase
         .from('programs')
         .select(`
@@ -137,25 +138,20 @@ export default function ProgramasPage() {
       }
 
       const { data: programsData, error: programsError } = await programsQuery;
-
       if (programsError) throw programsError;
 
-      // Obtener conteos para cada programa
       const programsWithCounts = await Promise.all(
         (programsData || []).map(async (program) => {
-          // Contar maestros asignados
           const { count: maestrosCount } = await supabase
             .from('teacher_program')
             .select('*', { count: 'exact', head: true })
             .eq('program_id', program.id);
 
-          // Contar materias
           const { count: materiasCount } = await supabase
             .from('subjects')
             .select('*', { count: 'exact', head: true })
             .eq('program_id', program.id);
 
-          // Contar horarios a través de materias
           const { data: subjectsIds } = await supabase
             .from('subjects')
             .select('id')
@@ -188,11 +184,7 @@ export default function ProgramasPage() {
 
   const loadSedes = async () => {
     try {
-      const { data, error } = await supabase
-        .from('sedes')
-        .select('*')
-        .order('name');
-
+      const { data, error } = await supabase.from('sedes').select('*').order('name');
       if (error) throw error;
       setSedes(data || []);
     } catch (error) {
@@ -203,11 +195,7 @@ export default function ProgramasPage() {
 
   const loadTeachers = async () => {
     try {
-      const { data, error } = await supabase
-        .from('teachers')
-        .select('*')
-        .order('name');
-
+      const { data, error } = await supabase.from('teachers').select('*').order('name');
       if (error) throw error;
       setTeachers(data || []);
     } catch (error) {
@@ -216,14 +204,150 @@ export default function ProgramasPage() {
     }
   };
 
+  // ── Descarga del Concentrado General en Excel ─────────────────────────────
+  const handleDownloadConcentrado = async () => {
+    try {
+      setDownloadingConcentrado(true);
+
+      // 1. Obtener TODOS los programas visibles
+      let programsQuery = supabase
+        .from('programs')
+        .select('id, name, sede:sede_id(name)')
+        .order('name');
+
+      if (!isAdmin && allowedPrograms.length > 0) {
+        programsQuery = programsQuery.in('id', allowedPrograms);
+      }
+
+      const { data: allPrograms, error: programsError } = await programsQuery;
+      if (programsError) throw programsError;
+
+      const rows: ConcentradoRow[] = [];
+
+      for (const prog of allPrograms || []) {
+        // 2. Obtener materias de este programa
+        const { data: subjects } = await supabase
+          .from('subjects')
+          .select('id, name')
+          .eq('program_id', prog.id);
+
+        if (!subjects || subjects.length === 0) continue;
+        const subjectIds = subjects.map(s => s.id);
+
+        // 3. Obtener horarios con maestro, materia y grupo
+        const { data: schedules } = await supabase
+          .from('schedule')
+          .select(`
+            id,
+            day,
+            start_hour,
+            end_hour,
+            teacher:teachers(id, name, category:categories(category)),
+            subject:subjects(id, name),
+            group:groups(id, name)
+          `)
+          .in('subject_id', subjectIds)
+          .order('teacher_id')
+          .order('subject_id')
+          .order('day');
+
+        if (!schedules || schedules.length === 0) continue;
+
+        // 4. Agrupar por maestro → materia+grupo
+        type DayKey = 'Lunes' | 'Martes' | 'Miércoles' | 'Jueves' | 'Viernes' | 'Sábado';
+
+        interface GroupedKey {
+          teacherId: string;
+          teacherName: string;
+          contractType: string;
+          subjectName: string;
+          groupName: string;
+          daySchedules: Partial<Record<DayKey, { start: number; end: number }>>;
+        }
+
+        const teacherMap = new Map<string, Map<string, GroupedKey>>();
+
+        schedules.forEach((s: any) => {
+          const teacher = Array.isArray(s.teacher) ? s.teacher[0] : s.teacher;
+          const subject = Array.isArray(s.subject) ? s.subject[0] : s.subject;
+          const group   = Array.isArray(s.group)   ? s.group[0]   : s.group;
+          if (!teacher || !subject || !group) return;
+
+          const cat = teacher.category
+            ? (Array.isArray(teacher.category) ? teacher.category[0] : teacher.category)
+            : null;
+          const catStr = (cat?.category || '').toUpperCase();
+          const contractType = catStr.includes('BASE') ? 'BASE'
+            : catStr.includes('INVITADO') ? 'INVITADO'
+            : catStr || 'N/D';
+
+          const tId = teacher.id;
+          const rowKey = `${subject.id}-${group.id}`;
+
+          if (!teacherMap.has(tId)) teacherMap.set(tId, new Map());
+          const tRows = teacherMap.get(tId)!;
+
+          if (!tRows.has(rowKey)) {
+            tRows.set(rowKey, {
+              teacherId: tId,
+              teacherName: teacher.name,
+              contractType,
+              subjectName: subject.name,
+              groupName: group.name,
+              daySchedules: {},
+            });
+          }
+
+          const entry = tRows.get(rowKey)!;
+          entry.daySchedules[s.day as DayKey] = { start: s.start_hour, end: s.end_hour };
+        });
+
+        // 5. Convertir a filas del concentrado
+        teacherMap.forEach((tRows, _tId) => {
+          const rowsArr = Array.from(tRows.values());
+
+          // Calcular total de horas del docente
+          const totalHours = rowsArr.reduce((acc, r) => {
+            return acc + Object.values(r.daySchedules).reduce((a, d) => a + (d ? d.end - d.start : 0), 0);
+          }, 0);
+
+          rowsArr.forEach((r, idx) => {
+            const hoursPerSubject = Object.values(r.daySchedules).reduce(
+              (a, d) => a + (d ? d.end - d.start : 0), 0
+            );
+            rows.push({
+              teacherName: idx === 0 ? r.teacherName : '',
+              programName: prog.name,
+              contractType: idx === 0 ? r.contractType : '',
+              sede: (prog.sede as any)?.name || '',
+              subjectName: r.subjectName,
+              groupName: r.groupName,
+              daySchedules: r.daySchedules,
+              hoursPerSubject,
+              totalHoursTeacher: idx === 0 ? totalHours : undefined,
+            });
+          });
+        });
+      }
+
+      if (rows.length === 0) {
+        toast.error('No hay horarios registrados para generar el concentrado');
+        return;
+      }
+
+      downloadConcentradoExcel(rows, 'Concentrado General 2026');
+      toast.success('Concentrado descargado correctamente');
+    } catch (error: any) {
+      console.error('Error generating concentrado:', error);
+      toast.error('Error al generar el concentrado');
+    } finally {
+      setDownloadingConcentrado(false);
+    }
+  };
+
   const openCreateModal = () => {
     setEditingProgram(null);
-    setFormData({
-      name: '',
-      type: 'LIC',
-      coordinator_id: '',
-      sede_id: '',
-    });
+    setFormData({ name: '', type: 'LIC', coordinator_id: '', sede_id: '' });
     setErrors({});
     setIsModalOpen(true);
   };
@@ -243,48 +367,27 @@ export default function ProgramasPage() {
   const closeModal = () => {
     setIsModalOpen(false);
     setEditingProgram(null);
-    setFormData({
-      name: '',
-      type: 'LIC',
-      coordinator_id: '',
-      sede_id: '',
-    });
+    setFormData({ name: '', type: 'LIC', coordinator_id: '', sede_id: '' });
     setErrors({});
   };
 
   const validateForm = (): boolean => {
     const newErrors: Partial<Record<keyof FormData, string>> = {};
-
-    if (!formData.name.trim()) {
-      newErrors.name = 'El nombre es requerido';
-    }
-
-    if (!formData.type) {
-      newErrors.type = 'El tipo es requerido';
-    }
-
-    if (!formData.sede_id) {
-      newErrors.sede_id = 'La sede es requerida';
-    }
-
-    if (!formData.coordinator_id) {
-      newErrors.coordinator_id = 'El coordinador es requerido';
-    }
-
+    if (!formData.name.trim()) newErrors.name = 'El nombre es requerido';
+    if (!formData.type) newErrors.type = 'El tipo es requerido';
+    if (!formData.sede_id) newErrors.sede_id = 'La sede es requerida';
+    if (!formData.coordinator_id) newErrors.coordinator_id = 'El coordinador es requerido';
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
     if (!validateForm()) {
       toast.error('Por favor corrija los errores en el formulario');
       return;
     }
-
     setSubmitting(true);
-
     try {
       const programData: ProgramInsert = {
         name: formData.name.trim(),
@@ -292,26 +395,15 @@ export default function ProgramasPage() {
         coordinator_id: formData.coordinator_id || null,
         sede_id: formData.sede_id || null,
       };
-
       if (editingProgram) {
-        // Actualizar
-        const { error } = await supabase
-          .from('programs')
-          .update(programData)
-          .eq('id', editingProgram.id);
-
+        const { error } = await supabase.from('programs').update(programData).eq('id', editingProgram.id);
         if (error) throw error;
         toast.success('Programa actualizado exitosamente');
       } else {
-        // Crear
-        const { error } = await supabase
-          .from('programs')
-          .insert([programData]);
-
+        const { error } = await supabase.from('programs').insert([programData]);
         if (error) throw error;
         toast.success('Programa creado exitosamente');
       }
-
       closeModal();
       await loadPrograms();
     } catch (error: any) {
@@ -334,38 +426,21 @@ export default function ProgramasPage() {
 
   const handleDelete = async () => {
     if (!deletingProgram) return;
-
     try {
-      // Verificar si hay relaciones que impidan el borrado
       const { count: materiasCount } = await supabase
-        .from('subjects')
-        .select('*', { count: 'exact', head: true })
-        .eq('program_id', deletingProgram.id);
-
+        .from('subjects').select('*', { count: 'exact', head: true }).eq('program_id', deletingProgram.id);
       if (materiasCount && materiasCount > 0) {
         toast.error('No se puede eliminar el programa porque tiene materias asociadas');
-        closeDeleteDialog();
-        return;
+        closeDeleteDialog(); return;
       }
-
       const { count: maestrosCount } = await supabase
-        .from('teacher_program')
-        .select('*', { count: 'exact', head: true })
-        .eq('program_id', deletingProgram.id);
-
+        .from('teacher_program').select('*', { count: 'exact', head: true }).eq('program_id', deletingProgram.id);
       if (maestrosCount && maestrosCount > 0) {
         toast.error('No se puede eliminar el programa porque tiene maestros asignados');
-        closeDeleteDialog();
-        return;
+        closeDeleteDialog(); return;
       }
-
-      const { error } = await supabase
-        .from('programs')
-        .delete()
-        .eq('id', deletingProgram.id);
-
+      const { error } = await supabase.from('programs').delete().eq('id', deletingProgram.id);
       if (error) throw error;
-
       toast.success('Programa eliminado exitosamente');
       closeDeleteDialog();
       await loadPrograms();
@@ -376,11 +451,7 @@ export default function ProgramasPage() {
   };
 
   const handleTypeChange = (value: string) => {
-    const newType = value as 'LIC' | 'LEIP' | 'MAE';
-    setFormData({
-      ...formData,
-      type: newType,
-    });
+    setFormData({ ...formData, type: value as 'LIC' | 'LEIP' | 'MAE' });
   };
 
   const openManageTeachersModal = (program: ProgramWithRelations) => {
@@ -394,7 +465,6 @@ export default function ProgramasPage() {
   };
 
   const handleTeachersUpdate = async () => {
-    // Recargar solo los programas para actualizar el contador
     await loadPrograms();
   };
 
@@ -410,14 +480,10 @@ export default function ProgramasPage() {
 
   const getTipoBadgeColor = (type: string) => {
     switch (type) {
-      case 'LIC':
-        return 'bg-blue-100 text-blue-800';
-      case 'LEIP':
-        return 'bg-green-100 text-green-800';
-      case 'MAE':
-        return 'bg-purple-100 text-purple-800';
-      default:
-        return 'bg-gray-100 text-gray-800';
+      case 'LIC': return 'bg-blue-100 text-blue-800';
+      case 'LEIP': return 'bg-green-100 text-green-800';
+      case 'MAE': return 'bg-purple-100 text-purple-800';
+      default: return 'bg-gray-100 text-gray-800';
     }
   };
 
@@ -438,12 +504,24 @@ export default function ProgramasPage() {
             Gestión de licenciaturas y maestrías
           </p>
         </div>
-        {isAdmin && (
-          <Button onClick={openCreateModal} className="gap-2">
-            <Plus className="w-4 h-4" />
-            Nuevo Programa
+        <div className="flex gap-2">
+          {/* ── Botón Concentrado General Excel ── */}
+          <Button
+            variant="outline"
+            onClick={handleDownloadConcentrado}
+            disabled={downloadingConcentrado}
+            className="gap-2 border-emerald-600 text-emerald-700 hover:bg-emerald-50"
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            {downloadingConcentrado ? 'Generando...' : 'Concentrado General'}
           </Button>
-        )}
+          {isAdmin && (
+            <Button onClick={openCreateModal} className="gap-2">
+              <Plus className="w-4 h-4" />
+              Nuevo Programa
+            </Button>
+          )}
+        </div>
       </div>
 
       <Card className="dark:bg-slate-800 dark:border-slate-700">
@@ -489,20 +567,12 @@ export default function ProgramasPage() {
                     <TableRow key={program.id}>
                       <TableCell className="font-medium">{program.name}</TableCell>
                       <TableCell>
-                        <span
-                          className={`px-2 py-1 rounded-full text-xs font-semibold ${getTipoBadgeColor(
-                            program.type
-                          )}`}
-                        >
+                        <span className={`px-2 py-1 rounded-full text-xs font-semibold ${getTipoBadgeColor(program.type)}`}>
                           {program.type}
                         </span>
                       </TableCell>
-                      <TableCell>
-                        {program.sede ? program.sede.name : '-'}
-                      </TableCell>
-                      <TableCell>
-                        {program.coordinador ? program.coordinador.name : '-'}
-                      </TableCell>
+                      <TableCell>{program.sede ? program.sede.name : '-'}</TableCell>
+                      <TableCell>{program.coordinador ? program.coordinador.name : '-'}</TableCell>
                       <TableCell className="text-center">
                         <button
                           onClick={() => openManageTeachersModal(program)}
@@ -578,45 +648,28 @@ export default function ProgramasPage() {
         <DialogContent className="sm:max-w-[500px]">
           <form onSubmit={handleSubmit}>
             <DialogHeader>
-              <DialogTitle>
-                {editingProgram ? 'Editar Programa' : 'Nuevo Programa'}
-              </DialogTitle>
+              <DialogTitle>{editingProgram ? 'Editar Programa' : 'Nuevo Programa'}</DialogTitle>
               <DialogDescription>
                 {editingProgram
                   ? 'Modifica los datos del programa académico'
                   : 'Completa los datos para crear un nuevo programa académico'}
               </DialogDescription>
             </DialogHeader>
-
             <div className="grid gap-4 py-4">
-              {/* Nombre */}
               <div className="grid gap-2">
-                <Label htmlFor="name">
-                  Nombre del Programa <span className="text-red-500">*</span>
-                </Label>
+                <Label htmlFor="name">Nombre del Programa <span className="text-red-500">*</span></Label>
                 <Input
                   id="name"
                   value={formData.name}
-                  onChange={(e) =>
-                    setFormData({ ...formData, name: e.target.value })
-                  }
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   placeholder="Ej: Pedagogía, Administración Educativa"
                   className={errors.name ? 'border-red-500' : ''}
                 />
-                {errors.name && (
-                  <p className="text-sm text-red-500">{errors.name}</p>
-                )}
+                {errors.name && <p className="text-sm text-red-500">{errors.name}</p>}
               </div>
-
-              {/* Tipo */}
               <div className="grid gap-2">
-                <Label htmlFor="type">
-                  Tipo <span className="text-red-500">*</span>
-                </Label>
-                <Select
-                  value={formData.type}
-                  onValueChange={handleTypeChange}
-                >
+                <Label htmlFor="type">Tipo <span className="text-red-500">*</span></Label>
+                <Select value={formData.type} onValueChange={handleTypeChange}>
                   <SelectTrigger className={errors.type ? 'border-red-500' : ''}>
                     <SelectValue placeholder="Selecciona el tipo" />
                   </SelectTrigger>
@@ -626,83 +679,41 @@ export default function ProgramasPage() {
                     <SelectItem value="MAE">Maestría (MAE)</SelectItem>
                   </SelectContent>
                 </Select>
-                {errors.type && (
-                  <p className="text-sm text-red-500">{errors.type}</p>
-                )}
+                {errors.type && <p className="text-sm text-red-500">{errors.type}</p>}
               </div>
-
-              {/* Sede */}
               <div className="grid gap-2">
-                <Label htmlFor="sede">
-                  Sede <span className="text-red-500">*</span>
-                </Label>
-                <Select
-                  value={formData.sede_id}
-                  onValueChange={(value) =>
-                    setFormData({ ...formData, sede_id: value })
-                  }
-                >
+                <Label htmlFor="sede">Sede <span className="text-red-500">*</span></Label>
+                <Select value={formData.sede_id} onValueChange={(value) => setFormData({ ...formData, sede_id: value })}>
                   <SelectTrigger className={errors.sede_id ? 'border-red-500' : ''}>
                     <SelectValue placeholder="Selecciona la sede" />
                   </SelectTrigger>
                   <SelectContent>
                     {sedes.map((sede) => (
-                      <SelectItem key={sede.id} value={sede.id}>
-                        {sede.name}
-                      </SelectItem>
+                      <SelectItem key={sede.id} value={sede.id}>{sede.name}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                {errors.sede_id && (
-                  <p className="text-sm text-red-500">{errors.sede_id}</p>
-                )}
+                {errors.sede_id && <p className="text-sm text-red-500">{errors.sede_id}</p>}
               </div>
-
-              {/* Coordinador */}
               <div className="grid gap-2">
-                <Label htmlFor="coordinator">
-                  Coordinador <span className="text-red-500">*</span>
-                </Label>
-                <Select
-                  value={formData.coordinator_id}
-                  onValueChange={(value) =>
-                    setFormData({ ...formData, coordinator_id: value })
-                  }
-                >
-                  <SelectTrigger
-                    className={errors.coordinator_id ? 'border-red-500' : ''}
-                  >
+                <Label htmlFor="coordinator">Coordinador <span className="text-red-500">*</span></Label>
+                <Select value={formData.coordinator_id} onValueChange={(value) => setFormData({ ...formData, coordinator_id: value })}>
+                  <SelectTrigger className={errors.coordinator_id ? 'border-red-500' : ''}>
                     <SelectValue placeholder="Selecciona el coordinador" />
                   </SelectTrigger>
                   <SelectContent>
                     {teachers.map((teacher) => (
-                      <SelectItem key={teacher.id} value={teacher.id}>
-                        {teacher.name}
-                      </SelectItem>
+                      <SelectItem key={teacher.id} value={teacher.id}>{teacher.name}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                {errors.coordinator_id && (
-                  <p className="text-sm text-red-500">{errors.coordinator_id}</p>
-                )}
+                {errors.coordinator_id && <p className="text-sm text-red-500">{errors.coordinator_id}</p>}
               </div>
             </div>
-
             <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={closeModal}
-                disabled={submitting}
-              >
-                Cancelar
-              </Button>
+              <Button type="button" variant="outline" onClick={closeModal} disabled={submitting}>Cancelar</Button>
               <Button type="submit" disabled={submitting}>
-                {submitting
-                  ? 'Guardando...'
-                  : editingProgram
-                  ? 'Actualizar'
-                  : 'Crear Programa'}
+                {submitting ? 'Guardando...' : editingProgram ? 'Actualizar' : 'Crear Programa'}
               </Button>
             </DialogFooter>
           </form>
@@ -736,16 +747,13 @@ export default function ProgramasPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
             <AlertDialogDescription>
-              Esta acción no se puede deshacer. Se eliminará permanentemente el
-              programa <strong>{deletingProgram?.name}</strong>.
+              Esta acción no se puede deshacer. Se eliminará permanentemente el programa{' '}
+              <strong>{deletingProgram?.name}</strong>.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDelete}
-              className="bg-red-600 hover:bg-red-700"
-            >
+            <AlertDialogAction onClick={handleDelete} className="bg-red-600 hover:bg-red-700">
               Eliminar
             </AlertDialogAction>
           </AlertDialogFooter>
