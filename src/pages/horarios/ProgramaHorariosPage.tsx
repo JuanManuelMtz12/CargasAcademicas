@@ -69,8 +69,10 @@ import {
   BookOpen,
   Users,
   FileDown,
+  TableProperties,
 } from 'lucide-react';
 import { generateOficioFromTemplate, downloadAllOficiosForAllTeachers } from '@/utils/oficioGenerator';
+import { downloadTeacherSchedulePDF, TeacherScheduleRow, DayKey } from '@/utils/teacherSchedulePDF';
 import { DaySchedule, MultiDayScheduleFormData, ScheduleValidationError, ValidationError } from '@/types/multi-day-schedule';
 
 // Tipos de la base de datos
@@ -923,6 +925,62 @@ setSubjects(subjectsDataFull || []);
     }
   };
 
+  // ── Descarga el horario individual del docente como PDF ───────────────────
+  const handleDownloadTeacherSchedule = (teacherId: string, teacherName: string) => {
+    try {
+      // Filtrar asignaturas del docente en el ciclo seleccionado
+      const teacherSchedules = schedules.filter(s => {
+        if (s.teacher_id !== teacherId) return false;
+        if (selectedSchoolCycleId && s.school_cycle_id !== selectedSchoolCycleId) return false;
+        return true;
+      });
+
+      if (teacherSchedules.length === 0) {
+        toast.error('El docente no tiene horarios asignados en este período');
+        return;
+      }
+
+      // Detectar tipo de contrato desde la categoría
+      const teacher = teachers.find(t => t.id === teacherId);
+      const categoryStr = teacher?.category?.category?.toUpperCase() || '';
+      const contractType = categoryStr.includes('BASE')
+        ? 'BASE'
+        : categoryStr.includes('INVITADO')
+        ? 'INVITADO'
+        : categoryStr || 'N/D';
+
+      // Nombre del ciclo escolar
+      const cycleName = schoolCycles.find(c => c.id === selectedSchoolCycleId)?.name || '';
+
+      // Agrupar por materia + grupo (una fila por combinación)
+      const grouped = new Map<string, TeacherScheduleRow>();
+
+      teacherSchedules.forEach(s => {
+        const key = `${s.subject_id}-${s.group_id}`;
+        if (!grouped.has(key)) {
+          grouped.set(key, {
+            teacherName,
+            contractType,
+            programName: program?.name || '',
+            sede: program?.sede?.name || '',
+            subjectName: s.subject?.name || 'N/D',
+            groupName: s.group?.name || 'N/D',
+            daySchedules: {},
+          });
+        }
+        const row = grouped.get(key)!;
+        const day = s.day as DayKey;
+        row.daySchedules[day] = { start: s.start_hour, end: s.end_hour };
+      });
+
+      downloadTeacherSchedulePDF(teacherName, contractType, Array.from(grouped.values()), cycleName);
+      toast.success('Horario del docente descargado correctamente');
+    } catch (error: any) {
+      console.error('Error al descargar horario del docente:', error);
+      toast.error('Error al generar el horario del docente');
+    }
+  };
+
   // Manejo de errores
   if (error) {
     return (
@@ -1324,6 +1382,15 @@ grouped[key].daySchedules[day] = {
                             {/* Acciones */}
                             <TableCell className="text-right">
                               <div className="flex justify-end space-x-1">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleDownloadTeacherSchedule(item.teacherId, item.teacher)}
+                                  title="Descargar Horario del Docente"
+                                  className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                >
+                                  <TableProperties className="h-3 w-3" />
+                                </Button>
                                 <Button
                                   variant="outline"
                                   size="sm"
