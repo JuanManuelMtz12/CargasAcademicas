@@ -258,15 +258,15 @@ export const generateOficioFromTemplate = async (teacherId: string, programId?: 
     yPos += 15;
     
     doc.setFontSize(10);
-    doc.text('LIC. YUNERI CALIXTO PÉREZ', 105, yPos, { align: 'center' });
+    doc.text('DR. JUAN IGNACIO HERNÁNDEZ VÁZQUEZ', 105, yPos, { align: 'center' });
     yPos += 5;
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
-    doc.text('ENCARGADA DEL DESPACHO DE LA DIRECCIÓN DE LA', 105, yPos, { align: 'center' });
+    doc.text('DIRECTOR DE LA UNIDAD UPN 212 TEZIUTLÁN', 105, yPos, { align: 'center' });
     yPos += 4;
-    doc.text('UNIVERSIDAD PEDAGÓGICA NACIONAL', 105, yPos, { align: 'center' });
-    yPos += 4;
-    doc.text('UNIDAD 212 TEZIUTLÁN', 105, yPos, { align: 'center' });
+    doc.text('DE LA UNIVERSIDAD PEDAGÓGICA NACIONAL', 105, yPos, { align: 'center' });
+   // yPos += 4;
+  //  doc.text('UNIDAD 212 TEZIUTLÁN', 105, yPos, { align: 'center' });
     
     // Guardar el PDF
     const fileName = `Oficio_${teacher.name.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;

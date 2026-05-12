@@ -263,18 +263,18 @@ export const generateOficioPDF = async (teacherId: string): Promise<void> => {
     // Nombre del firmante - Centrado, Negrita, Mayúsculas
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(10);
-    doc.text('LIC. YUNERI CALIXTO PÉREZ', 105, signatureY + 21, { align: 'center' });
+    doc.text('DR. JUAN IGNACIO HERNÁNDEZ VÁZQUEZ', 105, signatureY + 21, { align: 'center' });
     
     // Cargo línea 1 - Centrado, Normal, Mayúsculas
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
-    doc.text('ENCARGADA DEL DESPACHO DE LA DIRECCIÓN', 105, signatureY + 26, { align: 'center' });
+    doc.text('DIRECTOR DE LA UNIDAD UPN 212 TEZIUTLÁN', 105, signatureY + 26, { align: 'center' });
     
     // Cargo línea 2 - Centrado, Normal, Mayúsculas
     doc.text('DE LA UNIVERSIDAD PEDAGÓGICA NACIONAL', 105, signatureY + 31, { align: 'center' });
     
     // Cargo línea 3 - Centrado, Normal, Mayúsculas
-    doc.text('UNIDAD 212 TEZIUTLÁN', 105, signatureY + 36, { align: 'center' });
+    //doc.text('UNIDAD 212 TEZIUTLÁN', 105, signatureY + 36, { align: 'center' });
 
     // Guardar PDF
     const fileName = `Oficio_${teacher.name.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
