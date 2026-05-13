@@ -11,6 +11,7 @@ interface ScheduleData {
   MIE?: string;
   JUE?: string;
   VIE?: string;
+  SAB?: string;
 }
 
 interface GroupData {
@@ -18,25 +19,47 @@ interface GroupData {
   schedules: ScheduleData[];
 }
 
-export const generateCalendarioAcademico = async (programId: string, cycleId: string) => {
+export const generateCalendarioAcademico = async (
+  programId: string,
+  cycleId: string,
+  isLeipProgram: boolean = false
+) => {
   try {
-    // Obtener información del programa
-    const { data: program, error: programError } = await supabase
-      .from('programs')
-      .select('name, coordinator_id')
-      .eq('id', programId)
-      .single();
+    // ── 1. Obtener información del programa ──────────────────────────────
+    let programName = '';
+    let coordinatorId: string | null = null;
 
-    if (programError) throw programError;
+    if (isLeipProgram) {
+      const { data: rows, error } = await supabase
+        .from('leip_programs')
+        .select('name, coordinator_id')
+        .eq('id', programId)
+        .limit(1);
+      if (error) throw error;
+      if (!rows || rows.length === 0) throw new Error('Programa LEIP no encontrado');
+      programName  = rows[0].name;
+      coordinatorId = rows[0].coordinator_id;
+    } else {
+      const { data: rows, error } = await supabase
+        .from('programs')
+        .select('name, coordinator_id')
+        .eq('id', programId)
+        .limit(1);
+      if (error) throw error;
+      if (!rows || rows.length === 0) throw new Error('Programa no encontrado');
+      programName  = rows[0].name;
+      coordinatorId = rows[0].coordinator_id;
+    }
 
-    // Obtener información del ciclo
-    const { data: cycle, error: cycleError } = await supabase
+    // ── 2. Obtener información del ciclo ─────────────────────────────────
+    const { data: cycleRows, error: cycleError } = await supabase
       .from('school_cycles')
       .select('name, start_date, end_date')
       .eq('id', cycleId)
-      .single();
-
+      .limit(1);
     if (cycleError) throw cycleError;
+    if (!cycleRows || cycleRows.length === 0) throw new Error('Ciclo no encontrado');
+    const cycle = cycleRows[0];
 
     // Formatear periodo con fechas
     const formatPeriodo = (startDate: string, endDate: string): string => {
@@ -44,149 +67,143 @@ export const generateCalendarioAcademico = async (programId: string, cycleId: st
         'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
         'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
       ];
-      
       const start = new Date(startDate);
-      const end = new Date(endDate);
-      
-      const startDay = start.getDate();
-      const startMonth = meses[start.getMonth()];
-      const endDay = end.getDate();
-      const endMonth = meses[end.getMonth()];
-      const endYear = end.getFullYear();
-      
-      return `del ${startDay} de ${startMonth} al ${endDay} de ${endMonth} del ${endYear}`;
+      const end   = new Date(endDate);
+      return `del ${start.getDate()} de ${meses[start.getMonth()]} al ${end.getDate()} de ${meses[end.getMonth()]} del ${end.getFullYear()}`;
     };
-    
+
     const periodoFormateado = formatPeriodo(cycle.start_date, cycle.end_date);
 
-    // Obtener coordinador del programa
+    // ── 3. Obtener coordinador ───────────────────────────────────────────
     let coordinatorName = 'N/D';
-    if (program.coordinator_id) {
-      const { data: coordinatorData } = await supabase
+    if (coordinatorId) {
+      const { data: teacherRows } = await supabase
         .from('teachers')
         .select('name')
-        .eq('id', program.coordinator_id)
-        .single();
-      
-      if (coordinatorData) {
-        coordinatorName = coordinatorData.name;
+        .eq('id', coordinatorId)
+        .limit(1);
+      if (teacherRows && teacherRows.length > 0) {
+        coordinatorName = teacherRows[0].name;
       }
     }
 
-    // Obtener los grupos del programa en este ciclo a través de la tabla schedule
-    // 1. Primero obtenemos las materias del programa
-    const { data: subjects, error: subjectsError } = await supabase
-      .from('subjects')
-      .select('id')
-      .eq('program_id', programId);
+    // ── 4. Obtener materias del programa ─────────────────────────────────
+    let subjectIds: string[] = [];
 
-    if (subjectsError) throw subjectsError;
-    if (!subjects || subjects.length === 0) {
-      throw new Error('El programa no tiene materias asignadas');
+    if (isLeipProgram) {
+      const { data: subjects, error: subjectsError } = await supabase
+        .from('leip_subjects')
+        .select('id')
+        .eq('leip_program_id', programId);
+      if (subjectsError) throw subjectsError;
+      if (!subjects || subjects.length === 0)
+        throw new Error('El programa LEIP no tiene materias asignadas');
+      subjectIds = subjects.map(s => s.id);
+    } else {
+      const { data: subjects, error: subjectsError } = await supabase
+        .from('subjects')
+        .select('id')
+        .eq('program_id', programId);
+      if (subjectsError) throw subjectsError;
+      if (!subjects || subjects.length === 0)
+        throw new Error('El programa no tiene materias asignadas');
+      subjectIds = subjects.map(s => s.id);
     }
 
-    const subjectIds = subjects.map(s => s.id);
+    // ── 5. Obtener grupos únicos con horarios ────────────────────────────
+    const scheduleTable = isLeipProgram ? 'leip_schedule' : 'schedule';
+    const subjectFk     = isLeipProgram ? 'leip_subject_id' : 'subject_id';
 
-    // 2. Obtener los grupos únicos que tienen horarios de estas materias en este ciclo
     const { data: scheduleData, error: scheduleError } = await supabase
-      .from('schedule')
+      .from(scheduleTable)
       .select('group_id, groups(id, name)')
-      .in('subject_id', subjectIds)
+      .in(subjectFk, subjectIds)
       .eq('school_cycle_id', cycleId);
 
     if (scheduleError) throw scheduleError;
-    if (!scheduleData || scheduleData.length === 0) {
+    if (!scheduleData || scheduleData.length === 0)
       throw new Error('No hay horarios asignados para este programa y ciclo escolar');
-    }
 
-    // 3. Extraer grupos únicos
-    const groupsMap = new Map();
+    // Extraer grupos únicos
+    const groupsMap = new Map<string, { id: string; name: string }>();
     scheduleData.forEach((item: any) => {
-      if (item.groups && !groupsMap.has(item.groups.id)) {
-        groupsMap.set(item.groups.id, {
-          id: item.groups.id,
-          name: item.groups.name
-        });
+      const g = Array.isArray(item.groups) ? item.groups[0] : item.groups;
+      if (g && !groupsMap.has(g.id)) {
+        groupsMap.set(g.id, { id: g.id, name: g.name });
       }
     });
 
-    const groups = Array.from(groupsMap.values()).sort((a, b) => 
+    const groups = Array.from(groupsMap.values()).sort((a, b) =>
       a.name.localeCompare(b.name)
     );
 
-    // Para cada grupo, obtener sus horarios
+    // ── 6. Para cada grupo, obtener sus horarios ─────────────────────────
     const groupsWithSchedules: GroupData[] = await Promise.all(
       groups.map(async (group) => {
+        const selectFields = isLeipProgram
+          ? `id, day, start_hour, end_hour, teachers(name), leip_subjects(name, id)`
+          : `id, day, start_hour, end_hour, teachers(name), subjects(name, clave)`;
+
         const { data: schedules } = await supabase
-          .from('schedule')
-          .select(`
-            id,
-            day,
-            start_hour,
-            end_hour,
-            teachers (name),
-            subjects (name, clave)
-          `)
+          .from(scheduleTable)
+          .select(selectFields)
           .eq('group_id', group.id)
           .eq('school_cycle_id', cycleId)
-          .in('subject_id', subjectIds);
+          .in(subjectFk, subjectIds);
 
-        // Agrupar horarios por asignatura
         const schedulesBySubject: { [key: string]: ScheduleData } = {};
-        
+
         schedules?.forEach((schedule: any) => {
-          if (!schedule.subjects) return;
-          
-          const key = `${schedule.subjects.name}-${schedule.subjects.clave}-${schedule.teachers?.name || 'ND'}`;
+          const subjectRaw = isLeipProgram
+            ? (Array.isArray(schedule.leip_subjects) ? schedule.leip_subjects[0] : schedule.leip_subjects)
+            : (Array.isArray(schedule.subjects)      ? schedule.subjects[0]      : schedule.subjects);
+
+          const teacherRaw = Array.isArray(schedule.teachers)
+            ? schedule.teachers[0]
+            : schedule.teachers;
+
+          if (!subjectRaw) return;
+
+          const subjectName = subjectRaw.name || 'N/D';
+          const subjectCode = isLeipProgram
+            ? (subjectRaw.id?.slice(0, 6) || '-')
+            : (subjectRaw.clave || '-');
+          const teacherName = teacherRaw?.name || 'N/D';
+
+          const key = `${subjectName}-${subjectCode}-${teacherName}`;
           if (!schedulesBySubject[key]) {
-            const teacherName = schedule.teachers?.name || 'N/D';
-            
             schedulesBySubject[key] = {
-              subject: schedule.subjects.name,
-              code: schedule.subjects.clave,
+              subject: subjectName,
+              code: subjectCode,
               teacher: teacherName,
             };
           }
-          
-          // Convertir día a código
-          const dayMap: { [key: string]: 'LUN' | 'MAR' | 'MIE' | 'JUE' | 'VIE' } = {
-            'Lunes': 'LUN',
-            'Martes': 'MAR',
-            'Miércoles': 'MIE',
-            'Jueves': 'JUE',
-            'Viernes': 'VIE'
+
+          const dayMap: Record<string, string> = {
+            'Lunes': 'LUN', 'Martes': 'MAR', 'Miércoles': 'MIE',
+            'Jueves': 'JUE', 'Viernes': 'VIE', 'Sábado': 'SAB',
           };
           const dayKey = dayMap[schedule.day];
           if (dayKey) {
-            schedulesBySubject[key][dayKey] = `${String(schedule.start_hour).padStart(2, '0')}:00-${String(schedule.end_hour).padStart(2, '0')}:00`;
+            (schedulesBySubject[key] as any)[dayKey] =
+              `${String(schedule.start_hour).padStart(2, '0')}:00-${String(schedule.end_hour).padStart(2, '0')}:00`;
           }
         });
 
         return {
           groupName: group.name,
-          schedules: Object.values(schedulesBySubject)
+          schedules: Object.values(schedulesBySubject),
         };
       })
     );
 
-    // Debug: Imprimir datos antes de generar PDF
-    console.log('=== DATOS PARA PDF ===');
-    console.log('Programa:', program.name);
-    console.log('Ciclo:', cycle.name);
-    console.log('Coordinador:', coordinatorName);
-    console.log('Grupos con horarios:', groupsWithSchedules);
-    console.log('Cantidad de grupos:', groupsWithSchedules.length);
-    groupsWithSchedules.forEach((g, i) => {
-      console.log(`Grupo ${i}:`, g.groupName, '- Horarios:', g.schedules.length);
-      console.log('Horarios detalle:', g.schedules);
-    });
-
-    // Generar el PDF
+    // ── 7. Generar el PDF ────────────────────────────────────────────────
     await generatePDF({
-      program: program.name,
+      program: programName,
       cycle: periodoFormateado,
       coordinator: coordinatorName,
-      groupsWithSchedules
+      groupsWithSchedules,
+      isLeipProgram,
     });
 
   } catch (error) {
@@ -195,7 +212,7 @@ export const generateCalendarioAcademico = async (programId: string, cycleId: st
   }
 };
 
-// Función auxiliar para cargar imagen y convertir a base64
+// ── Cargar imagen como base64 ──────────────────────────────────────────────────
 async function loadImageAsBase64(path: string): Promise<string> {
   try {
     const response = await fetch(path);
@@ -212,204 +229,138 @@ async function loadImageAsBase64(path: string): Promise<string> {
   }
 }
 
+// ── Generador de PDF ───────────────────────────────────────────────────────────
 async function generatePDF({
   program,
   cycle,
   coordinator,
-  groupsWithSchedules
+  groupsWithSchedules,
+  isLeipProgram = false,
 }: {
   program: string;
   cycle: string;
   coordinator: string;
   groupsWithSchedules: GroupData[];
+  isLeipProgram?: boolean;
 }) {
-  // Cargar logos
   const logoPueblaBase64 = await loadImageAsBase64('/logos/puebla.png');
-  const logoUPNBase64 = await loadImageAsBase64('/logos/upn.png');
+  const logoUPNBase64    = await loadImageAsBase64('/logos/upn.png');
 
-  // Crear documento PDF en formato horizontal (Letter)
-  const doc = new jsPDF({
-    orientation: 'landscape',
-    unit: 'mm',
-    format: 'letter'
-  });
-
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'letter' });
   const pageWidth = doc.internal.pageSize.getWidth();
   let yPosition = 10;
 
-  // NUEVO ENCABEZADO CON LOGOS Y TEXTO CENTRADO
-  
-  // Logo izquierdo - Gobierno de Puebla (aumentado ~30%: 35x16 → 46x21)
-  if (logoPueblaBase64) {
-    doc.addImage(logoPueblaBase64, 'PNG', 15, yPosition, 46, 21);
-  }
+  // Logos
+  if (logoPueblaBase64) doc.addImage(logoPueblaBase64, 'PNG', 15, yPosition, 46, 21);
+  if (logoUPNBase64)    doc.addImage(logoUPNBase64, 'PNG', pageWidth - 40, yPosition, 25, 21);
 
-  // Logo derecho - UPN (mantener proporción original 1200x1020 = 1.18:1)
-  // Altura: 21mm, Ancho: 25mm (proporcional, aumentado ~30%)
-  if (logoUPNBase64) {
-    const upnHeight = 21;
-    const upnWidth = 25;  // Proporcional a dimensiones originales 1200x1020
-    doc.addImage(logoUPNBase64, 'PNG', pageWidth - 15 - upnWidth, yPosition, upnWidth, upnHeight);
-  }
-
-  // Bloque de texto central (4 líneas)
+  // Encabezado de texto
   const centerX = pageWidth / 2;
-  let textY = yPosition + 7;  // Ajustado por logos más grandes
-
-  // Línea 1
+  let textY = yPosition + 7;
   doc.setFontSize(11);
   doc.setFont('helvetica', 'bold');
-  doc.text('UNIVERSIDAD PEDAGÓGICA NACIONAL', centerX, textY, { align: 'center' });
-  textY += 5;
-
-  // Línea 2
-  doc.text('UNIDAD 212 TEZIUTLÁN, PUE.', centerX, textY, { align: 'center' });
-  textY += 5;
-
-  // Línea 3
-  doc.text('ASIGNACIÓN DE CARGAS ACADÉMICAS', centerX, textY, { align: 'center' });
-  textY += 6;
-
-  // Línea 4 (más destacada)
+  doc.text('UNIVERSIDAD PEDAGÓGICA NACIONAL', centerX, textY, { align: 'center' }); textY += 5;
+  doc.text('UNIDAD 212 TEZIUTLÁN, PUE.', centerX, textY, { align: 'center' }); textY += 5;
+  doc.text('ASIGNACIÓN DE CARGAS ACADÉMICAS', centerX, textY, { align: 'center' }); textY += 6;
   doc.setFontSize(12);
   doc.text(`HORARIO POR GRUPO: ${program.toUpperCase()}`, centerX, textY, { align: 'center' });
-  
-  yPosition = textY + 10;  // Espaciado aumentado por logos más grandes
+  yPosition = textY + 10;
 
-  // TABLA DE INFORMACIÓN BÁSICA (según plantilla)
+  // Tabla de información básica
   autoTable(doc, {
     startY: yPosition,
     head: [],
     body: [
-      [
-        'LICENCIATURA:',
-        program.toUpperCase(),
-        'PERIODO:',
-        cycle.toUpperCase(),
-        'PLAN:',
-        'N/D'
-      ],
-      [
-        'UNIDAD:',
-        '212 TEZIUTLÁN',
-        'COORDINADOR:',
-        { content: coordinator.toUpperCase(), colSpan: 3 }
-      ]
+      ['LICENCIATURA:', program.toUpperCase(), 'PERIODO:', cycle.toUpperCase(), 'PLAN:', 'N/D'],
+      ['UNIDAD:', '212 TEZIUTLÁN', 'COORDINADOR:', { content: coordinator.toUpperCase(), colSpan: 3 }],
     ],
     theme: 'grid',
-    styles: {
-      fontSize: 8,
-      cellPadding: 1.5,
-      lineColor: [0, 0, 0],
-      lineWidth: 0.1
-    },
+    styles: { fontSize: 8, cellPadding: 1.5, lineColor: [0, 0, 0], lineWidth: 0.1 },
     columnStyles: {
-      0: { fontStyle: 'bold', cellWidth: 35, fillColor: [28, 69, 135], textColor: [255, 255, 255] },  // Azul oscuro con texto blanco
+      0: { fontStyle: 'bold', cellWidth: 35, fillColor: [28, 69, 135], textColor: [255, 255, 255] },
       1: { cellWidth: 60 },
-      2: { fontStyle: 'bold', cellWidth: 25, fillColor: [28, 69, 135], textColor: [255, 255, 255] },  // Azul oscuro con texto blanco
+      2: { fontStyle: 'bold', cellWidth: 25, fillColor: [28, 69, 135], textColor: [255, 255, 255] },
       3: { cellWidth: 55 },
-      4: { fontStyle: 'bold', cellWidth: 20, fillColor: [28, 69, 135], textColor: [255, 255, 255] },  // Azul oscuro con texto blanco
-      5: { cellWidth: 'auto' }
+      4: { fontStyle: 'bold', cellWidth: 20, fillColor: [28, 69, 135], textColor: [255, 255, 255] },
+      5: { cellWidth: 'auto' },
     },
     didDrawCell: (data: any) => {
-      // Aplicar color azul a la celda COORDINADOR en fila 2, columna 2 (índice 1, 2)
       if (data.row.index === 1 && data.column.index === 2) {
         data.cell.styles.fillColor = [28, 69, 135];
         data.cell.styles.textColor = [255, 255, 255];
         data.cell.styles.fontStyle = 'bold';
       }
     },
-    margin: { left: 15, right: 15 }
+    margin: { left: 15, right: 15 },
   });
 
   yPosition = (doc as any).lastAutoTable.finalY + 6;
 
-  // GENERAR UNA TABLA SEPARADA PARA CADA GRUPO (con su propio encabezado)
+  // Encabezados de días según tipo de programa
+  const dayHeaders = isLeipProgram
+    ? ['GRUPO', 'ASIGNATURA', 'CLAVE', 'ASESOR', 'LUN', 'MAR', 'MIE', 'JUE', 'VIE', 'SÁB']
+    : ['GRUPO', 'ASIGNATURA', 'CLAVE', 'ASESOR', 'LUN', 'MAR', 'MIE', 'JUE', 'VIE'];
+
+  // Tabla por grupo
   groupsWithSchedules.forEach((group, groupIndex) => {
-    // Crear las filas de este grupo
     const scheduleRows: any[] = [];
-    
+
     group.schedules.forEach((schedule, index) => {
+      const dayValues = isLeipProgram
+        ? [schedule.LUN || '', schedule.MAR || '', schedule.MIE || '',
+           schedule.JUE || '', schedule.VIE || '', (schedule as any).SAB || '']
+        : [schedule.LUN || '', schedule.MAR || '', schedule.MIE || '',
+           schedule.JUE || '', schedule.VIE || ''];
+
       if (index === 0) {
-        // Primera fila del grupo: incluir el nombre del grupo con rowSpan
         scheduleRows.push([
           {
             content: group.groupName,
             rowSpan: group.schedules.length,
             styles: {
-              halign: 'center',
-              valign: 'middle',
-              fontStyle: 'bold',
-              fillColor: [28, 69, 135],
-              textColor: [255, 255, 255]
-            }
+              halign: 'center', valign: 'middle', fontStyle: 'bold',
+              fillColor: [28, 69, 135], textColor: [255, 255, 255],
+            },
           },
-          schedule.subject,
-          schedule.code,
-          schedule.teacher,
-          schedule.LUN || '',
-          schedule.MAR || '',
-          schedule.MIE || '',
-          schedule.JUE || '',
-          schedule.VIE || ''
+          schedule.subject, schedule.code, schedule.teacher,
+          ...dayValues,
         ]);
       } else {
-        // Filas subsiguientes del mismo grupo: no incluir el nombre del grupo (el rowSpan lo maneja)
-        scheduleRows.push([
-          schedule.subject,
-          schedule.code,
-          schedule.teacher,
-          schedule.LUN || '',
-          schedule.MAR || '',
-          schedule.MIE || '',
-          schedule.JUE || '',
-          schedule.VIE || ''
-        ]);
+        scheduleRows.push([schedule.subject, schedule.code, schedule.teacher, ...dayValues]);
       }
     });
 
-    // Generar tabla para este grupo
+    const colStyles: any = {
+      0: { cellWidth: 12, halign: 'center', fontStyle: 'bold' },
+      1: { cellWidth: isLeipProgram ? 55 : 60 },
+      2: { cellWidth: 15, halign: 'center' },
+      3: { cellWidth: isLeipProgram ? 45 : 50 },
+      4: { cellWidth: 22, halign: 'center' },
+      5: { cellWidth: 22, halign: 'center' },
+      6: { cellWidth: 22, halign: 'center' },
+      7: { cellWidth: 22, halign: 'center' },
+      8: { cellWidth: 22, halign: 'center' },
+    };
+    if (isLeipProgram) colStyles[9] = { cellWidth: 20, halign: 'center' };
+
     autoTable(doc, {
       startY: yPosition,
-      head: [['GRUPO', 'ASIGNATURA', 'CLAVE', 'ASESOR', 'LUN', 'MAR', 'MIE', 'JUE', 'VIE']],
+      head: [dayHeaders],
       body: scheduleRows,
       theme: 'grid',
-      styles: {
-        fontSize: 7,
-        cellPadding: 1.5,
-        lineColor: [0, 0, 0],
-        lineWidth: 0.1
-      },
+      styles: { fontSize: 7, cellPadding: 1.5, lineColor: [0, 0, 0], lineWidth: 0.1 },
       headStyles: {
-        fillColor: [28, 69, 135],  // Azul oscuro como en la plantilla
-        textColor: [255, 255, 255],  // Texto blanco
-        fontStyle: 'bold',
-        halign: 'center'
+        fillColor: [28, 69, 135], textColor: [255, 255, 255],
+        fontStyle: 'bold', halign: 'center',
       },
-      columnStyles: {
-        0: { cellWidth: 12, halign: 'center', fontStyle: 'bold' },  // Grupo
-        1: { cellWidth: 60 },  // Asignatura
-        2: { cellWidth: 15, halign: 'center' },  // Clave
-        3: { cellWidth: 50 },  // Asesor
-        4: { cellWidth: 22, halign: 'center' },  // LUN
-        5: { cellWidth: 22, halign: 'center' },  // MAR
-        6: { cellWidth: 22, halign: 'center' },  // MIE
-        7: { cellWidth: 22, halign: 'center' },  // JUE
-        8: { cellWidth: 22, halign: 'center' }   // VIE
-      },
-      margin: { left: 15, right: 15 }
+      columnStyles: colStyles,
+      margin: { left: 15, right: 15 },
     });
 
-    // Actualizar yPosition para la siguiente tabla y agregar espacio entre grupos
     yPosition = (doc as any).lastAutoTable.finalY;
-    
-    // Agregar espacio después de cada grupo (excepto el último)
-    if (groupIndex < groupsWithSchedules.length - 1) {
-      yPosition += 5;  // Espacio de 5mm entre grupos
-    }
+    if (groupIndex < groupsWithSchedules.length - 1) yPosition += 5;
   });
 
-  // Guardar el PDF
   const fileName = `Calendario_Academico_${program.replace(/\s+/g, '_')}_${cycle.replace(/\s+/g, '_')}.pdf`;
   doc.save(fileName);
 }
