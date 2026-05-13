@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Clock } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 import {
@@ -469,6 +471,12 @@ export default function ProgramasLeipPage() {
                             <Edit className="w-4 h-4" />
                             Editar
                           </Button>
+                          <Link to={`/programas-leip/${program.id}/horarios`}>
+  <Button variant="outline" size="sm" className="gap-1">
+    <Clock className="w-4 h-4" />
+    Horarios
+  </Button>
+</Link>
                           <Button
                             variant="outline"
                             size="sm"
