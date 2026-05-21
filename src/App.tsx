@@ -22,7 +22,6 @@ import DebugPermissionsPage from '@/pages/DebugPermissionsPage';
 import CategoriasPage from '@/pages/categorias/CategoriasPage';
 import SedesPage from '@/pages/sedes/SedesPage';
 import LeipHorariosPage from '@/pages/programas-leip/LeipHorariosPage';
-import LeipHorariosPage from '@/pages/programas-leip/LeipHorariosPage';
 import MaestriasSabatinasPage from '@/pages/maestrias-sabado/MaestriasSabatinasPage';
 import MaestriaSabadoSchedulePage from '@/pages/maestrias-sabado/MaestriaSabadoSchedulePage';
 import CargasAcademicasPage from '@/pages/cargas-academicas/CargasAcademicasPage';
@@ -74,7 +73,7 @@ function App() {
               <Route path="programas-leip/:programId/horarios" element={<ProtectedRoute requireModule="programas-leip"><LeipHorariosPage /></ProtectedRoute>} />
             <Route path="maestrias-sabado" element={<ProtectedRoute requireModule="maestrias-sabado"><MaestriasSabatinasPage /></ProtectedRoute>} />
             <Route path="maestrias-sabado/:id/horarios" element={<ProtectedRoute requireModule="maestrias-sabado"><MaestriaSabadoSchedulePage /></ProtectedRoute>} />
-
+<Route path="programas-leip/:programId/horarios" element={<ProtectedRoute requireModule="programas-leip"><LeipHorariosPage /></ProtectedRoute>} />
             <Route path="cargas-academicas" element={<ProtectedRoute requireModule="cargas-academicas"><CargasAcademicasPage /></ProtectedRoute>} />
             <Route path="especializaciones" element={<ProtectedRoute requireModule="especializaciones"><EspecializacionesPage /></ProtectedRoute>} />
             
