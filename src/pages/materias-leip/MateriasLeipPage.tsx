@@ -60,10 +60,6 @@ interface LeipSubjectWithProgram extends LeipSubject {
     id: string;
     name: string;
   } | null;
-  module?: {
-    id: string;
-    name: string;
-  } | null;
 }
 
 interface LeipProgram {
@@ -71,16 +67,10 @@ interface LeipProgram {
   name: string;
 }
 
-interface LeipModule {
-  id: string;
-  name: string;
-  leip_program_id: string;
-}
-
 interface FormData {
   leip_program_id: string;
   name: string;
-  leip_module_id: string;
+  module_name: string;
 }
 
 const ITEMS_PER_PAGE = 10;
@@ -88,8 +78,6 @@ const ITEMS_PER_PAGE = 10;
 export default function MateriasLeipPage() {
   const [subjects, setSubjects] = useState<LeipSubjectWithProgram[]>([]);
   const [programs, setPrograms] = useState<LeipProgram[]>([]);
-  const [modules, setModules] = useState<LeipModule[]>([]);
-  const [filteredModules, setFilteredModules] = useState<LeipModule[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -105,7 +93,7 @@ export default function MateriasLeipPage() {
   const [formData, setFormData] = useState<FormData>({
     leip_program_id: '',
     name: '',
-    leip_module_id: '',
+    module_name: '',
   });
 
   const [errors, setErrors] = useState<Partial<Record<keyof FormData, string>>>({});
@@ -119,20 +107,10 @@ export default function MateriasLeipPage() {
     setCurrentPage(1);
   }, [searchTerm, filterProgram]);
 
-  // Filtrar módulos cuando cambia el programa seleccionado en el formulario
-  useEffect(() => {
-    if (formData.leip_program_id) {
-      const filtered = modules.filter(m => m.leip_program_id === formData.leip_program_id);
-      setFilteredModules(filtered);
-    } else {
-      setFilteredModules([]);
-    }
-  }, [formData.leip_program_id, modules]);
-
   const loadData = async () => {
     setLoading(true);
     try {
-      await Promise.all([loadSubjects(), loadPrograms(), loadModules()]);
+      await Promise.all([loadSubjects(), loadPrograms()]);
     } catch (error) {
       console.error('Error loading data:', error);
       toast.error('Error al cargar los datos');
@@ -148,10 +126,6 @@ export default function MateriasLeipPage() {
         .select(`
           *,
           program:leip_program_id (
-            id,
-            name
-          ),
-          module:leip_module_id (
             id,
             name
           )
@@ -181,21 +155,6 @@ export default function MateriasLeipPage() {
     }
   };
 
-  const loadModules = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('leip_modules')
-        .select('*')
-        .order('name');
-
-      if (error) throw error;
-      setModules(data || []);
-    } catch (error) {
-      console.error('Error loading modules:', error);
-      throw error;
-    }
-  };
-
   // Filtrado y búsqueda
   const filteredSubjects = subjects.filter((subject) => {
     const matchesSearch =
@@ -220,7 +179,7 @@ export default function MateriasLeipPage() {
     setFormData({
       leip_program_id: '',
       name: '',
-      leip_module_id: '',
+      module_name: '',
     });
     setErrors({});
     setIsModalOpen(true);
@@ -231,7 +190,7 @@ export default function MateriasLeipPage() {
     setFormData({
       leip_program_id: subject.leip_program_id,
       name: subject.name,
-      leip_module_id: subject.leip_module_id || '',
+      module_name: subject.module_name || '',
     });
     setErrors({});
     setIsModalOpen(true);
@@ -243,7 +202,7 @@ export default function MateriasLeipPage() {
     setFormData({
       leip_program_id: '',
       name: '',
-      leip_module_id: '',
+      module_name: '',
     });
     setErrors({});
   };
@@ -257,10 +216,6 @@ export default function MateriasLeipPage() {
 
     if (!formData.name.trim()) {
       newErrors.name = 'El nombre es requerido';
-    }
-
-    if (!formData.leip_module_id) {
-      newErrors.leip_module_id = 'El módulo es requerido';
     }
 
     setErrors(newErrors);
@@ -279,18 +234,14 @@ export default function MateriasLeipPage() {
     setSubmitting(true);
 
     try {
-      // Obtener el nombre del módulo seleccionado
-      const selectedModule = modules.find(m => m.id === formData.leip_module_id);
-      
       const subjectData = {
         leip_program_id: formData.leip_program_id,
         name: formData.name.trim(),
-        leip_module_id: formData.leip_module_id || null,
-        module_name: selectedModule?.name || null,
+        leip_module_id: null,
+        module_name: formData.module_name.trim() || null,
       };
 
       if (editingSubject) {
-        // Actualizar
         const { error } = await supabase
           .from('leip_subjects')
           .update(subjectData)
@@ -299,7 +250,6 @@ export default function MateriasLeipPage() {
         if (error) throw error;
         toast.success('Módulo LEIP actualizado exitosamente');
       } else {
-        // Crear
         const { error } = await supabase
           .from('leip_subjects')
           .insert([subjectData]);
@@ -332,7 +282,6 @@ export default function MateriasLeipPage() {
     if (!deletingSubject) return;
 
     try {
-      // Verificar si hay horarios asociados
       const { count: schedulesCount } = await supabase
         .from('leip_schedule')
         .select('*', { count: 'exact', head: true })
@@ -397,7 +346,6 @@ export default function MateriasLeipPage() {
         <CardContent className="space-y-4">
           {/* Filtros */}
           <div className="flex flex-col sm:flex-row gap-4">
-            {/* Búsqueda */}
             <div className="flex-1">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
@@ -410,7 +358,6 @@ export default function MateriasLeipPage() {
               </div>
             </div>
 
-            {/* Filtro por programa */}
             <div className="sm:w-64">
               <Select value={filterProgram} onValueChange={setFilterProgram}>
                 <SelectTrigger>
@@ -569,7 +516,7 @@ export default function MateriasLeipPage() {
                 <Select
                   value={formData.leip_program_id}
                   onValueChange={(value) =>
-                    setFormData({ ...formData, leip_program_id: value, leip_module_id: '' })
+                    setFormData({ ...formData, leip_program_id: value })
                   }
                 >
                   <SelectTrigger className={errors.leip_program_id ? 'border-red-500' : ''}>
@@ -588,38 +535,20 @@ export default function MateriasLeipPage() {
                 )}
               </div>
 
-              {/* Módulo */}
+              {/* Módulo (texto libre) */}
               <div className="grid gap-2">
-                <Label htmlFor="leip_module_id">
-                  Módulo <span className="text-red-500">*</span>
+                <Label htmlFor="module_name">
+                  Módulo{' '}
+                  <span className="text-gray-400 text-xs font-normal">(opcional)</span>
                 </Label>
-                <Select
-                  value={formData.leip_module_id || 'no-modules'}
-                  onValueChange={(value) =>
-                    setFormData({ ...formData, leip_module_id: value === 'no-modules' ? '' : value })
+                <Input
+                  id="module_name"
+                  value={formData.module_name}
+                  onChange={(e) =>
+                    setFormData({ ...formData, module_name: e.target.value })
                   }
-                  disabled={!formData.leip_program_id}
-                >
-                  <SelectTrigger className={errors.leip_module_id ? 'border-red-500' : ''}>
-                    <SelectValue placeholder={formData.leip_program_id ? "Selecciona el módulo" : "Primero selecciona un programa"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {filteredModules.length === 0 ? (
-                      <SelectItem value="no-modules" disabled>
-                        No hay módulos disponibles para este programa
-                      </SelectItem>
-                    ) : (
-                      filteredModules.map((module) => (
-                        <SelectItem key={module.id} value={module.id}>
-                          {module.name}
-                        </SelectItem>
-                      ))
-                    )}
-                  </SelectContent>
-                </Select>
-                {errors.leip_module_id && (
-                  <p className="text-sm text-red-500">{errors.leip_module_id}</p>
-                )}
+                  placeholder="Ej: Módulo I, Módulo de Investigación"
+                />
               </div>
 
               {/* Nombre */}
