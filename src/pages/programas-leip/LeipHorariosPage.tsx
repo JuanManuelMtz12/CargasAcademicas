@@ -286,15 +286,15 @@ export default function LeipHorariosPage() {
       }
 
       // Insertar nuevos
-      const inserts = enabledDays.map(day => ({
-        teacher_id: formTeacherId,
-        leip_subject_id: formSubjectId,
-        group_id: formGroupId,
-        school_cycle_id: formCycleId,
-        day: day.day,
-        start_hour: day.start_hour,
-        end_hour: day.end_hour,
-      }));
+        const inserts = enabledDays.map(day => ({
+      teacher_id: formTeacherId || null,
+      leip_subject_id: formSubjectId || null,
+      group_id: formGroupId || null,
+      school_cycle_id: formCycleId || null,
+      day: day.day,
+      start_hour: day.start_hour,
+      end_hour: day.end_hour,
+    }));
 
       const { error: insError } = await supabase.from('leip_schedule').insert(inserts);
       if (insError) throw insError;
