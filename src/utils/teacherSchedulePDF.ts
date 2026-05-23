@@ -86,7 +86,7 @@ export function generateTeacherSchedulePDF(
 
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
-  doc.text('BENEMÉRITA UNIVERSIDAD AUTÓNOMA DE PUEBLA', 143.5, 21, { align: 'center' });
+  doc.text('UNIVERSIDAD PEDAGÓGICA NACIONAL UNIDAD 212', 143.5, 21, { align: 'center' });
 
   // ── Bloque de datos del docente ────────────────────────────────────────────
   doc.setTextColor(0, 0, 0);
