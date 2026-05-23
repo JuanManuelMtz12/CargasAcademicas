@@ -124,7 +124,7 @@ export default function MainLayout() {
           {/* Header */}
           <div className="p-4 border-b border-gray-200 dark:border-slate-700/50 bg-gradient-to-r from-blue-50 to-orange-50 dark:from-slate-800 dark:to-slate-800">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold text-blue-600 dark:text-blue-400">Universidad Pedagógica Nacional 212 Teziutlán</h2>
+              <h2 className="text-lg font-bold text-blue-600 dark:text-blue-400">UPN 212</h2>
               <Button
                 variant="ghost"
                 size="sm"
