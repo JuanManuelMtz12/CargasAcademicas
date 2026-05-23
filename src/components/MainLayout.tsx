@@ -124,7 +124,7 @@ export default function MainLayout() {
           {/* Header */}
           <div className="p-4 border-b border-gray-200 dark:border-slate-700/50 bg-gradient-to-r from-blue-50 to-orange-50 dark:from-slate-800 dark:to-slate-800">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold text-blue-600 dark:text-blue-400">UPN Sistema</h2>
+              <h2 className="text-lg font-bold text-blue-600 dark:text-blue-400">Universidad Pedagógica Nacional 212 Teziutlán</h2>
               <Button
                 variant="ghost"
                 size="sm"
@@ -227,7 +227,7 @@ export default function MainLayout() {
               <Menu className="w-5 h-5" />
             </Button>
             <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-blue-700 dark:from-blue-400 dark:to-blue-500 bg-clip-text text-transparent">
-              Sistema de Gestión Escolar
+              Sistema de Cargas Académicas
             </h1>
             <ThemeToggle />
           </div>
@@ -242,15 +242,15 @@ export default function MainLayout() {
         <footer className="border-t border-gray-200 dark:border-slate-700/50 bg-white dark:bg-slate-800 px-6 py-3">
           <p className="text-center text-xs text-gray-400 dark:text-slate-500">
             Desarrollado por{' '}
-            <span className="font-medium text-gray-600 dark:text-slate-400">Ing. Juan Téllez</span>
+            <span className="font-medium text-gray-600 dark:text-slate-400">Ing. Juan Manuel Valerio Martínez</span>
             {' '}y{' '}
             <a
-              href="https://daeonix.com"
+              href=""
               target="_blank"
               rel="noopener noreferrer"
               className="font-medium text-blue-600 dark:text-blue-400 hover:underline"
             >
-              Daeonix Systems
+              Ing. Adolfo Ortiz Bautista
             </a>
             {' '}· © {new Date().getFullYear()}
           </p>
