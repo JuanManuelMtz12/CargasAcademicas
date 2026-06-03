@@ -206,59 +206,100 @@ export default function ProgramasPage() {
 
   // ── Descarga del Concentrado General en Excel ─────────────────────────────
   const handleDownloadConcentrado = async () => {
-    try {
-      setDownloadingConcentrado(true);
+  try {
+    setDownloadingConcentrado(true);
+    type DayKey = 'Lunes' | 'Martes' | 'Miércoles' | 'Jueves' | 'Viernes' | 'Sábado';
 
-      type DayKey = 'Lunes' | 'Martes' | 'Miércoles' | 'Jueves' | 'Viernes' | 'Sábado';
+    // 1. Programas visibles
+    let programsQuery = supabase
+      .from('programs')
+      .select('id, name, sede:sede_id(name)')
+      .order('name');
+    if (!isAdmin && allowedPrograms.length > 0) {
+      programsQuery = programsQuery.in('id', allowedPrograms);
+    }
+    const { data: allPrograms, error: programsError } = await programsQuery;
+    if (programsError) throw programsError;
 
-      // 1. Obtener todos los programas visibles con su sede
-      let programsQuery = supabase
-        .from('programs')
-        .select('id, name, sede:sede_id(name)')
-        .order('name');
-      if (!isAdmin && allowedPrograms.length > 0) {
-        programsQuery = programsQuery.in('id', allowedPrograms);
+    const progMap = new Map<string, { name: string; sede: string }>();
+    (allPrograms || []).forEach((p: any) => {
+      progMap.set(p.id, { name: p.name, sede: (p.sede as any)?.name || '' });
+    });
+
+    const allProgramIds = Array.from(progMap.keys());
+    if (allProgramIds.length === 0) {
+      toast.error('No hay programas disponibles');
+      return;
+    }
+
+    // 2. TODOS los docentes registrados en esos programas (con o sin horario)
+    const { data: teacherPrograms, error: tpError } = await supabase
+      .from('teacher_program')
+      .select(`
+        program_id,
+        teacher:teachers(
+          id, name,
+          category:categories(category)
+        )
+      `)
+      .in('program_id', allProgramIds);
+    if (tpError) throw tpError;
+
+    // Map teacherId → { name, contractType, programIds[] }
+    interface TeacherEntry {
+      name: string;
+      contractType: string;
+      programIds: Set<string>;
+    }
+    const teacherMap = new Map<string, TeacherEntry>();
+
+    (teacherPrograms || []).forEach((tp: any) => {
+      const t = Array.isArray(tp.teacher) ? tp.teacher[0] : tp.teacher;
+      if (!t) return;
+      const cat = t.category
+        ? (Array.isArray(t.category) ? t.category[0] : t.category)
+        : null;
+      const catStr = (cat?.category || '').toUpperCase();
+      const contractType = catStr.includes('BASE') ? 'BASE'
+        : catStr.includes('INVITADO') ? 'INVITADO'
+        : catStr || 'N/D';
+
+      if (!teacherMap.has(t.id)) {
+        teacherMap.set(t.id, { name: t.name, contractType, programIds: new Set() });
       }
-      const { data: allPrograms, error: programsError } = await programsQuery;
-      if (programsError) throw programsError;
+      teacherMap.get(t.id)!.programIds.add(tp.program_id);
+    });
 
-      // Mapa programId → { name, sede }
-      const progMap = new Map<string, { name: string; sede: string }>();
-      (allPrograms || []).forEach((p: any) => {
-        progMap.set(p.id, { name: p.name, sede: (p.sede as any)?.name || '' });
-      });
+    // 3. Materias de esos programas
+    const { data: allSubjects } = await supabase
+      .from('subjects')
+      .select('id, program_id')
+      .in('program_id', allProgramIds);
 
-      // 2. Obtener todas las materias de esos programas
-      const allProgramIds = Array.from(progMap.keys());
-      if (allProgramIds.length === 0) {
-        toast.error('No hay programas disponibles');
-        return;
-      }
+    const subjectProgMap = new Map<string, string>();
+    (allSubjects || []).forEach(s => subjectProgMap.set(s.id, s.program_id));
+    const allSubjectIds = (allSubjects || []).map(s => s.id);
 
-      const { data: allSubjects } = await supabase
-        .from('subjects')
-        .select('id, program_id')
-        .in('program_id', allProgramIds);
+    // 4. Horarios (puede estar vacío, no se corta aquí)
+    interface RowData {
+      teacherName: string;
+      contractType: string;
+      programName: string;
+      sede: string;
+      subjectName: string;
+      groupName: string;
+      daySchedules: Partial<Record<DayKey, { start: number; end: number }>>;
+    }
 
-      if (!allSubjects || allSubjects.length === 0) {
-        toast.error('No hay materias registradas');
-        return;
-      }
+    // Map teacherId → Map<rowKey, RowData>
+    const scheduleRows = new Map<string, Map<string, RowData>>();
 
-      // Mapa subjectId → programId
-      const subjectProgMap = new Map<string, string>();
-      allSubjects.forEach(s => subjectProgMap.set(s.id, s.program_id));
-      const allSubjectIds = allSubjects.map(s => s.id);
-
-      // 3. Obtener TODOS los horarios de una sola consulta
+    if (allSubjectIds.length > 0) {
       const { data: schedules } = await supabase
         .from('schedule')
         .select(`
-          id,
-          day,
-          start_hour,
-          end_hour,
-          teacher:teachers(id, name, category:categories(category)),
+          day, start_hour, end_hour,
+          teacher:teachers(id, name),
           subject:subjects(id, name),
           group:groups(id, name)
         `)
@@ -267,26 +308,7 @@ export default function ProgramasPage() {
         .order('subject_id')
         .order('day');
 
-      if (!schedules || schedules.length === 0) {
-        toast.error('No hay horarios registrados para generar el concentrado');
-        return;
-      }
-
-      // 4. Agrupar GLOBALMENTE por docente → programa+materia+grupo
-      // Key: teacherId → Map<"programId-subjectId-groupId", rowData>
-      interface RowData {
-        teacherName: string;
-        contractType: string;
-        programName: string;
-        sede: string;
-        subjectName: string;
-        groupName: string;
-        daySchedules: Partial<Record<DayKey, { start: number; end: number }>>;
-      }
-
-      const globalTeacherMap = new Map<string, { info: { name: string; contractType: string }; rows: Map<string, RowData> }>();
-
-      schedules.forEach((s: any) => {
+      (schedules || []).forEach((s: any) => {
         const teacher = Array.isArray(s.teacher) ? s.teacher[0] : s.teacher;
         const subject = Array.isArray(s.subject) ? s.subject[0] : s.subject;
         const group   = Array.isArray(s.group)   ? s.group[0]   : s.group;
@@ -296,27 +318,16 @@ export default function ProgramasPage() {
         const prog = progMap.get(programId);
         if (!prog) return;
 
-        const cat = teacher.category
-          ? (Array.isArray(teacher.category) ? teacher.category[0] : teacher.category)
-          : null;
-        const catStr = (cat?.category || '').toUpperCase();
-        const contractType = catStr.includes('BASE') ? 'BASE'
-          : catStr.includes('INVITADO') ? 'INVITADO'
-          : catStr || 'N/D';
-
-        const tId = teacher.id;
+        const tEntry = teacherMap.get(teacher.id);
+        const contractType = tEntry?.contractType || 'N/D';
         const rowKey = `${programId}-${subject.id}-${group.id}`;
 
-        if (!globalTeacherMap.has(tId)) {
-          globalTeacherMap.set(tId, {
-            info: { name: teacher.name, contractType },
-            rows: new Map(),
-          });
+        if (!scheduleRows.has(teacher.id)) {
+          scheduleRows.set(teacher.id, new Map());
         }
-
-        const tEntry = globalTeacherMap.get(tId)!;
-        if (!tEntry.rows.has(rowKey)) {
-          tEntry.rows.set(rowKey, {
+        const tRows = scheduleRows.get(teacher.id)!;
+        if (!tRows.has(rowKey)) {
+          tRows.set(rowKey, {
             teacherName: teacher.name,
             contractType,
             programName: prog.name,
@@ -326,58 +337,75 @@ export default function ProgramasPage() {
             daySchedules: {},
           });
         }
-
-        const row = tEntry.rows.get(rowKey)!;
-        row.daySchedules[s.day as DayKey] = { start: s.start_hour, end: s.end_hour };
+        tRows.get(rowKey)!.daySchedules[s.day as DayKey] = {
+          start: s.start_hour,
+          end: s.end_hour,
+        };
       });
+    }
 
-      // 5. Convertir a filas del concentrado ordenadas por nombre de docente
-      const rows: ConcentradoRow[] = [];
+    // 5. Construir filas — TODOS los docentes, tengan o no horario
+    const rows: ConcentradoRow[] = [];
 
-      const sortedTeachers = Array.from(globalTeacherMap.entries())
-        .sort((a, b) => a[1].info.name.localeCompare(b[1].info.name, 'es'));
+    const sortedTeachers = Array.from(teacherMap.entries())
+      .sort((a, b) => a[1].name.localeCompare(b[1].name, 'es'));
 
-      sortedTeachers.forEach(([_tId, tData]) => {
-        const rowsArr = Array.from(tData.rows.values())
-          .sort((a, b) => a.programName.localeCompare(b.programName, 'es'));
+    sortedTeachers.forEach(([tId, tInfo]) => {
+      const tRows = scheduleRows.get(tId);
 
-        // Total de horas del docente en TODOS sus programas
-        const totalHours = rowsArr.reduce((acc, r) => {
-          return acc + Object.values(r.daySchedules).reduce((a, d) => a + (d ? d.end - d.start : 0), 0);
-        }, 0);
-
-        rowsArr.forEach((r, idx) => {
-          const hoursPerSubject = Object.values(r.daySchedules).reduce(
-            (a, d) => a + (d ? d.end - d.start : 0), 0
-          );
-          rows.push({
-            teacherName: idx === 0 ? r.teacherName : '',
-            programName: r.programName,
-            contractType: idx === 0 ? r.contractType : '',
-            sede: r.sede,
-            subjectName: r.subjectName,
-            groupName: r.groupName,
-            daySchedules: r.daySchedules,
-            hoursPerSubject,
-            totalHoursTeacher: idx === 0 ? totalHours : undefined,
-          });
+      if (!tRows || tRows.size === 0) {
+        // Docente sin horario → una fila vacía para que aparezca en el concentrado
+        rows.push({
+          teacherName: tInfo.name,
+          programName: '',
+          contractType: tInfo.contractType,
+          sede: '',
+          subjectName: '',
+          groupName: '',
+          daySchedules: {},
+          hoursPerSubject: 0,
+          totalHoursTeacher: 0,
         });
-      });
-
-      if (rows.length === 0) {
-        toast.error('No hay horarios registrados para generar el concentrado');
         return;
       }
 
-      downloadConcentradoExcel(rows, 'Concentrado General 2026');
-      toast.success('Concentrado descargado correctamente');
-    } catch (error: any) {
-      console.error('Error generating concentrado:', error);
-      toast.error('Error al generar el concentrado');
-    } finally {
-      setDownloadingConcentrado(false);
+      const rowsArr = Array.from(tRows.values())
+        .sort((a, b) => a.programName.localeCompare(b.programName, 'es'));
+
+      const totalHours = rowsArr.reduce((acc, r) =>
+        acc + Object.values(r.daySchedules).reduce((a, d) => a + (d ? d.end - d.start : 0), 0), 0);
+
+      rowsArr.forEach((r, idx) => {
+        const hoursPerSubject = Object.values(r.daySchedules)
+          .reduce((a, d) => a + (d ? d.end - d.start : 0), 0);
+        rows.push({
+          teacherName: idx === 0 ? r.teacherName : '',
+          programName: r.programName,
+          contractType: idx === 0 ? r.contractType : '',
+          sede: r.sede,
+          subjectName: r.subjectName,
+          groupName: r.groupName,
+          daySchedules: r.daySchedules,
+          hoursPerSubject,
+          totalHoursTeacher: idx === 0 ? totalHours : undefined,
+        });
+      });
+    });
+
+    if (rows.length === 0) {
+      toast.error('No hay docentes registrados en los programas');
+      return;
     }
-  };
+
+    downloadConcentradoExcel(rows, 'Concentrado General 2026');
+    toast.success('Concentrado descargado correctamente');
+  } catch (error: any) {
+    console.error('Error generating concentrado:', error);
+    toast.error('Error al generar el concentrado');
+  } finally {
+    setDownloadingConcentrado(false);
+  }
+};
 
   const openCreateModal = () => {
     setEditingProgram(null);
