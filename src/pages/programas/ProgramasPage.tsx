@@ -232,7 +232,7 @@ export default function ProgramasPage() {
       return;
     }
 
-    // 2. TODOS los docentes registrados en esos programas (con o sin horario)
+    // 2. TODOS los docentes registrados en esos programas
     const { data: teacherPrograms, error: tpError } = await supabase
       .from('teacher_program')
       .select(`
@@ -245,7 +245,6 @@ export default function ProgramasPage() {
       .in('program_id', allProgramIds);
     if (tpError) throw tpError;
 
-    // Map teacherId → { name, contractType, programIds[] }
     interface TeacherEntry {
       name: string;
       contractType: string;
@@ -280,7 +279,20 @@ export default function ProgramasPage() {
     (allSubjects || []).forEach(s => subjectProgMap.set(s.id, s.program_id));
     const allSubjectIds = (allSubjects || []).map(s => s.id);
 
-    // 4. Horarios (puede estar vacío, no se corta aquí)
+    // 4. Ciclos escolares activos
+    const { data: activeCycles, error: cyclesError } = await supabase
+      .from('school_cycles')
+      .select('id')
+      .eq('is_active', true);
+    if (cyclesError) throw cyclesError;
+
+    const activeCycleIds = (activeCycles || []).map(c => c.id);
+    if (activeCycleIds.length === 0) {
+      toast.error('No hay ciclos escolares activos');
+      return;
+    }
+
+    // 5. Horarios — solo del ciclo activo
     interface RowData {
       teacherName: string;
       contractType: string;
@@ -291,7 +303,6 @@ export default function ProgramasPage() {
       daySchedules: Partial<Record<DayKey, { start: number; end: number }>>;
     }
 
-    // Map teacherId → Map<rowKey, RowData>
     const scheduleRows = new Map<string, Map<string, RowData>>();
 
     if (allSubjectIds.length > 0) {
@@ -304,6 +315,7 @@ export default function ProgramasPage() {
           group:groups(id, name)
         `)
         .in('subject_id', allSubjectIds)
+        .in('school_cycle_id', activeCycleIds)
         .order('teacher_id')
         .order('subject_id')
         .order('day');
@@ -344,7 +356,7 @@ export default function ProgramasPage() {
       });
     }
 
-    // 5. Construir filas — TODOS los docentes, tengan o no horario
+    // 6. Construir filas — solo docentes con horario en el ciclo activo
     const rows: ConcentradoRow[] = [];
 
     const sortedTeachers = Array.from(teacherMap.entries())
@@ -353,27 +365,15 @@ export default function ProgramasPage() {
     sortedTeachers.forEach(([tId, tInfo]) => {
       const tRows = scheduleRows.get(tId);
 
-      if (!tRows || tRows.size === 0) {
-        // Docente sin horario → una fila vacía para que aparezca en el concentrado
-        rows.push({
-          teacherName: tInfo.name,
-          programName: '',
-          contractType: tInfo.contractType,
-          sede: '',
-          subjectName: '',
-          groupName: '',
-          daySchedules: {},
-          hoursPerSubject: 0,
-          totalHoursTeacher: 0,
-        });
-        return;
-      }
+      // Si no tiene horarios en el ciclo activo, se omite
+      if (!tRows || tRows.size === 0) return;
 
       const rowsArr = Array.from(tRows.values())
         .sort((a, b) => a.programName.localeCompare(b.programName, 'es'));
 
       const totalHours = rowsArr.reduce((acc, r) =>
-        acc + Object.values(r.daySchedules).reduce((a, d) => a + (d ? d.end - d.start : 0), 0), 0);
+        acc + Object.values(r.daySchedules)
+          .reduce((a, d) => a + (d ? d.end - d.start : 0), 0), 0);
 
       rowsArr.forEach((r, idx) => {
         const hoursPerSubject = Object.values(r.daySchedules)
@@ -393,7 +393,7 @@ export default function ProgramasPage() {
     });
 
     if (rows.length === 0) {
-      toast.error('No hay docentes registrados en los programas');
+      toast.error('No hay horarios en el ciclo escolar activo');
       return;
     }
 
