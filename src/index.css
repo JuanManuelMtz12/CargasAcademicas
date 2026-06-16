@@ -1,0 +1,129 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --radius: 0.5rem;
+    
+    /* Sidebar variables - Modo Claro */
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 240 5.9% 10%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+    
+    /* General variables - Modo Claro */
+    --background: 0 0% 100%;
+    --foreground: 222.2 47.4% 11.2%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 47.4% 11.2%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 47.4% 11.2%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --primary-foreground: 210 40% 98%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+    --destructive: 0 100% 50%;
+    --destructive-foreground: 210 40% 98%;
+    --ring: 215 20.2% 65.1%;
+  }
+
+  .dark {
+    /* Chrome dark theme palette
+       #202124 → hsl(225, 6%, 13%)  main bg
+       #292a2d → hsl(225, 5%, 17%)  surface / card
+       #35363a → hsl(228, 4%, 22%)  elevated / hover
+       #3c4043 → hsl(210, 5%, 26%)  border
+       #e8eaed → hsl(216, 11%, 92%) primary text
+       #9aa0a6 → hsl(207, 6%, 63%)  secondary text
+       #8ab4f8 → hsl(214, 92%, 76%) blue accent
+    */
+
+    /* Sidebar */
+    --sidebar-background: 225 5% 17%;
+    --sidebar-foreground: 216 11% 92%;
+    --sidebar-primary: 214 92% 76%;
+    --sidebar-primary-foreground: 225 6% 13%;
+    --sidebar-accent: 228 4% 22%;
+    --sidebar-accent-foreground: 216 11% 92%;
+    --sidebar-border: 210 5% 26%;
+    --sidebar-ring: 214 92% 76%;
+
+    /* General */
+    --background: 225 6% 13%;
+    --foreground: 216 11% 92%;
+    --muted: 228 4% 22%;
+    --muted-foreground: 207 6% 63%;
+    --popover: 225 5% 17%;
+    --popover-foreground: 216 11% 92%;
+    --card: 225 5% 17%;
+    --card-foreground: 216 11% 92%;
+    --border: 210 5% 26%;
+    --input: 210 5% 26%;
+    --primary-foreground: 225 6% 13%;
+    --secondary-foreground: 216 11% 92%;
+    --accent-foreground: 216 11% 92%;
+    --destructive: 0 72% 60%;
+    --destructive-foreground: 216 11% 95%;
+    --ring: 214 92% 76%;
+  }
+}
+
+@layer utilities {
+  /* Custom scrollbar para modo oscuro */
+  .dark ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  .dark ::-webkit-scrollbar-track {
+    background: #202124;
+    border-radius: 5px;
+  }
+
+  .dark ::-webkit-scrollbar-thumb {
+    background: #3c4043;
+    border-radius: 5px;
+    border: 2px solid #202124;
+  }
+
+  .dark ::-webkit-scrollbar-thumb:hover {
+    background: #5f6368;
+  }
+
+  /* Custom scrollbar para modo claro */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: hsl(0, 0%, 96%);
+    border-radius: 5px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: hsl(220, 13%, 85%);
+    border-radius: 5px;
+    border: 2px solid hsl(0, 0%, 96%);
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(220, 13%, 75%);
+  }
+}
+
+img {
+  object-position: top;
+}
+
+.fixed {
+  position: fixed;
+}
