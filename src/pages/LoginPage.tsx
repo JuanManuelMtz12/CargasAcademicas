@@ -45,14 +45,18 @@ export default function LoginPage() {
       <div className="w-full max-w-md relative z-10">
         <div className="bg-white/80 dark:bg-slate-800/90 backdrop-blur-xl shadow-2xl dark:shadow-slate-900/50 rounded-2xl p-8 border border-gray-200/50 dark:border-slate-700/50 transition-all duration-300">
           <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-blue-500 to-blue-600 dark:from-blue-600 dark:to-blue-700 rounded-2xl mb-4 shadow-lg shadow-blue-500/30 dark:shadow-blue-600/20 transition-all duration-300">
-              <Lock className="w-8 h-8 text-white" />
-            </div>
-            <h1 className="text-2xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 dark:from-slate-100 dark:to-slate-300 bg-clip-text text-transparent">
-              Sistema Escolar UPN
-            </h1>
-            <p className="text-gray-600 dark:text-slate-400 mt-2">Gestión de Horarios y Programas</p>
-          </div>
+  <div className="inline-flex items-center justify-center w-20 h-20 mb-4">
+    <img 
+      src="/logos/upn.png" 
+      alt="Logo UPN" 
+      className="w-full h-full object-contain"
+    />
+  </div>
+  <h1 className="text-2xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 dark:from-slate-100 dark:to-slate-300 bg-clip-text text-transparent">
+    Sistema Escolar UPN
+  </h1>
+  <p className="text-gray-600 dark:text-slate-400 mt-2">Gestión de Horarios y Programas</p>
+</div>
 
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
