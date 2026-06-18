@@ -13,13 +13,13 @@ const isOddSemesterGroup = (groupName: string): boolean => {
 };
 
 // ── Control de espacio en la página ───────────────────────────────────────
+// Límite vertical (mm) a partir del cual empieza el arte del pie de página
+// (barra dorada con redes sociales y dirección) dentro de la imagen de fondo.
+// Si el contenido pasa de aquí, se manda a una página nueva en vez de encimarse.
 const FOOTER_SAFE_Y = 245;
 
 // Altura estimada (mm) que ocupa el bloque ATENTAMENTE + frase + nombre + cargo.
 const SIGNATURE_BLOCK_HEIGHT = 42;
-
-// Y mínima desde la que arranca el bloque de firma (nunca sube más arriba)
-const SIGNATURE_MIN_Y = 210;
 
 const BG_SCALE = 0.97;
 const BG_ORIGINAL_WIDTH = 215.9;
@@ -36,6 +36,8 @@ const addBackgroundImage = (doc: jsPDF, bgImage: string) => {
   );
 };
 
+// Si el contenido (closing + firma) no cabe antes del pie de página,
+// agrega una página nueva con el mismo fondo y regresa la posición inicial segura.
 const ensureSpaceForClosingBlock = (
   doc: jsPDF,
   currentY: number,
@@ -50,22 +52,6 @@ const ensureSpaceForClosingBlock = (
     try { addBackgroundImage(doc, bgImage); } catch { /* noop */ }
   }
   return 40;
-};
-
-// Dibuja el bloque de firma con posición Y fija relativa a offsets
-const drawSignatureBlock = (doc: jsPDF, yPos: number) => {
-  const signatureY = Math.max(yPos, SIGNATURE_MIN_Y);
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
-  doc.text('ATENTAMENTE', 105, signatureY, { align: 'center' });
-  doc.text('"EDUCAR PARA TRANSFORMAR"', 105, signatureY + 6, { align: 'center' });
-  doc.setFontSize(10);
-  doc.text('DR. JUAN IGNACIO HERNÁNDEZ VÁZQUEZ', 105, signatureY + 21, { align: 'center' });
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9);
-  doc.text('DIRECTOR DE LA UNIDAD UPN 212 TEZIUTLÁN', 105, signatureY + 26, { align: 'center' });
-  doc.text('DE LA UNIVERSIDAD PEDAGÓGICA NACIONAL', 105, signatureY + 30, { align: 'center' });
 };
 
 // Función para formatear fecha a español
@@ -198,6 +184,7 @@ export const generateOficioFromTemplate = async (teacherId: string, programId?: 
     doc.setFontSize(10); doc.setFont('helvetica', 'normal');
     doc.text(`Teziutlán, Pue., ${formatDateToSpanish(new Date())}`, 195, 41, { align: 'right' });
 
+    
     let yPos = 49;
     doc.setFont('helvetica', 'bold');
     doc.text(teacherName, 25, yPos); yPos += 5;
@@ -230,13 +217,20 @@ export const generateOficioFromTemplate = async (teacherId: string, programId?: 
     const closingText = 'Deseándole el mayor de los éxitos en el desempeño de esta tarea, aprovecho la oportunidad para invitarle a que, en el ejercicio de sus funciones, ponga lo mejor de su esfuerzo y dedicación al servicio de la Universidad Pedagógica Nacional Unidad 212 Teziutlán, siguiendo las indicaciones institucionales, estableciendo comunicación permanente con su coordinador(a) y apoyando en las diversas actividades que fortalecen la formación de nuestros alumnos, así como la vida institucional de nuestra universidad.';
     const splitClosing = doc.splitTextToSize(closingText, 165);
 
+    // ── Si el cierre + firma no caben antes del pie de página, saltar a página nueva ──
     yPos = ensureSpaceForClosingBlock(doc, yPos, splitClosing.length, bgImage);
 
     doc.text(splitClosing, 25, yPos, { align: 'justify', maxWidth: 165 });
     yPos += splitClosing.length * 6 + 15;
 
-    // ── Bloque de firma con Y fija ────────────────────────────────────────
-    drawSignatureBlock(doc, yPos);
+    doc.setFont('helvetica', 'bold');
+    doc.text('ATENTAMENTE', 105, yPos, { align: 'center' }); yPos += 6;
+    doc.text('"EDUCAR PARA TRANSFORMAR"', 105, yPos, { align: 'center' }); yPos += 15;
+    doc.setFontSize(10);
+    doc.text('DR. JUAN IGNACIO HERNÁNDEZ VÁZQUEZ', 105, yPos, { align: 'center' }); yPos += 5;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+    doc.text('DIRECTOR DE LA UNIDAD UPN 212 TEZIUTLÁN', 105, yPos, { align: 'center' }); yPos += 4;
+    doc.text('DE LA UNIVERSIDAD PEDAGÓGICA NACIONAL', 105, yPos, { align: 'center' });
 
     doc.save(`Oficio_${teacher.name.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`);
   } catch (error: any) {
@@ -375,13 +369,20 @@ const generateOficioBlob = async (teacherId: string, programId?: string): Promis
     const closingText = 'Deseándole el mayor de los éxitos en el desempeño de esta tarea, aprovecho la oportunidad para invitarle a que, en el ejercicio de sus funciones, ponga lo mejor de su esfuerzo y dedicación al servicio de la Universidad Pedagógica Nacional Unidad 212 Teziutlán, siguiendo las indicaciones institucionales, estableciendo comunicación permanente con su coordinador(a) y apoyando en las diversas actividades que fortalecen la formación de nuestros alumnos, así como la vida institucional de nuestra universidad.';
     const splitClosing = doc.splitTextToSize(closingText, 165);
 
+    // ── Si el cierre + firma no caben antes del pie de página, saltar a página nueva ──
     yPos = ensureSpaceForClosingBlock(doc, yPos, splitClosing.length, bgImage);
 
     doc.text(splitClosing, 25, yPos, { align: 'justify', maxWidth: 165 });
     yPos += splitClosing.length * 6 + 15;
 
-    // ── Bloque de firma con Y fija ────────────────────────────────────────
-    drawSignatureBlock(doc, yPos);
+    doc.setFont('helvetica', 'bold');
+    doc.text('ATENTAMENTE', 105, yPos, { align: 'center' }); yPos += 6;
+    doc.text('"EDUCAR PARA TRANSFORMAR"', 105, yPos, { align: 'center' }); yPos += 15;
+    doc.setFontSize(10);
+    doc.text('DR. JUAN IGNACIO HERNÁNDEZ VÁZQUEZ', 105, yPos, { align: 'center' }); yPos += 5;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+    doc.text('DIRECTOR DE LA UNIDAD UPN 212 TEZIUTLÁN', 105, yPos, { align: 'center' }); yPos += 4;
+    doc.text('DE LA UNIVERSIDAD PEDAGÓGICA NACIONAL', 105, yPos, { align: 'center' });
 
     const blob = doc.output('blob');
     const fileName = `Oficio_${teacher.name.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
