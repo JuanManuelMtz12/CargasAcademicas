@@ -80,9 +80,9 @@ const drawClosingAndSignature = (
 
   // Altura total necesaria: texto cierre + espacio + firma
   const closingHeight = splitClosing.length * 6;
-  const totalNeeded = closingHeight + 15 + 35; // 35 = altura bloque firma
+  const totalNeeded = closingHeight + 8 + 24; // 8=espacio, 24=bloque firma (ATENTAMENTE+lema+nombre+cargos)
 
-  // Si no cabe en esta página, saltar a una nueva
+  // Solo saltar de página si realmente no cabe
   if (yPos + totalNeeded > FOOTER_SAFE_Y) {
     doc.addPage();
     if (bgImage) {
@@ -93,7 +93,7 @@ const drawClosingAndSignature = (
   }
 
   doc.text(splitClosing, 25, yPos, { align: 'justify', maxWidth: 165 });
-  yPos += closingHeight + 15;
+  yPos += closingHeight + 8;
 
   // En página 1 respetar SIGNATURE_MIN_Y para que no suba demasiado
   const signatureY = isPage1 ? Math.max(yPos, SIGNATURE_MIN_Y) : yPos;
