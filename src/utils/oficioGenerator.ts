@@ -15,7 +15,7 @@ const isOddSemesterGroup = (groupName: string): boolean => {
 const MAX_ROWS_SINGLE_PAGE = 6;
 
 // Y mínima para la firma cuando todo cabe en página 1
-const SIGNATURE_MIN_Y = 195;
+const SIGNATURE_MIN_Y = 185;
 // Límite inferior seguro antes del pie de página
 const FOOTER_SAFE_Y = 242;
 
