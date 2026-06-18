@@ -80,6 +80,15 @@ interface FormData {
   sede_id: string;
 }
 
+// ── Semestres nones permitidos (primer dígito del nombre del grupo) ──────────
+const ODD_SEMESTERS = ['1', '3', '5', '7'];
+
+const isOddSemesterGroup = (groupName: string): boolean => {
+  if (!groupName) return false;
+  const firstDigit = groupName.trim().match(/\d/)?.[0];
+  return ODD_SEMESTERS.includes(firstDigit || '');
+};
+
 export default function ProgramasPage() {
   const { allowedPrograms, isAdmin, loading: permissionsLoading } = usePermissions();
   const [programs, setPrograms] = useState<ProgramWithRelations[]>([]);
@@ -326,6 +335,9 @@ export default function ProgramasPage() {
         const group   = Array.isArray(s.group)   ? s.group[0]   : s.group;
         if (!teacher || !subject || !group) return;
 
+        // ── FILTRO: solo semestres nones (1, 3, 5, 7) ──────────────────
+        if (!isOddSemesterGroup(group.name)) return;
+
         const programId = subjectProgMap.get(subject.id) || '';
         const prog = progMap.get(programId);
         if (!prog) return;
@@ -365,7 +377,7 @@ export default function ProgramasPage() {
     sortedTeachers.forEach(([tId, tInfo]) => {
       const tRows = scheduleRows.get(tId);
 
-      // Si no tiene horarios en el ciclo activo, se omite
+      // Si no tiene horarios en el ciclo activo (o solo tenía pares), se omite
       if (!tRows || tRows.size === 0) return;
 
       const rowsArr = Array.from(tRows.values())
