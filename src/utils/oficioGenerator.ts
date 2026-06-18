@@ -3,6 +3,7 @@ import autoTable from 'jspdf-autotable';
 import { supabase } from '@/lib/supabase';
 import JSZip from 'jszip';
 
+
 // Semestres nones permitidos (primer carácter del nombre del grupo)
 const ODD_SEMESTERS = ['1', '3', '5', '7'];
 
@@ -183,6 +184,11 @@ export const generateOficioFromTemplate = async (teacherId: string, programId?: 
     doc.setFontSize(10); doc.setFont('helvetica', 'normal');
     doc.text(`Teziutlán, Pue., ${formatDateToSpanish(new Date())}`, 195, 41, { align: 'right' });
 
+    doc.setFontSize(40);
+doc.setTextColor(255, 0, 0);
+doc.text('VERSION-FIX-2', 105, 150, { align: 'center' });
+    doc.setTextColor(0, 0, 0);
+    
     let yPos = 49;
     doc.setFont('helvetica', 'bold');
     doc.text(teacherName, 25, yPos); yPos += 5;
