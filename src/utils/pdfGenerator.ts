@@ -10,6 +10,14 @@ const isOddSemesterGroup = (groupName: string): boolean => {
   return ODD_SEMESTERS.includes(groupName.charAt(0));
 };
 
+// ── Control de espacio en la página (A4: 210 x 297mm, fondo a página completa) ──
+// Límite vertical (mm) a partir del cual empieza el arte del pie de página
+// (barra dorada con redes sociales y dirección) dentro de la imagen de fondo.
+const FOOTER_SAFE_Y = 258;
+
+// Altura estimada (mm) que ocupa el bloque ATENTAMENTE + frase + nombre + cargo.
+const SIGNATURE_BLOCK_HEIGHT = 35;
+
 // Función para convertir fecha a formato español
 const formatDateToSpanish = (date: Date): string => {
   const months = [
@@ -200,9 +208,22 @@ export const generateOficioPDF = async (teacherId: string): Promise<void> => {
     doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
     const closingText = 'Deseándole el mayor de los éxitos en el desempeño de esta tarea, aprovecho la oportunidad para invitarle a que, en el ejercicio de sus funciones, ponga lo mejor de su esfuerzo y dedicación al servicio de la Universidad Pedagógica Nacional Unidad 212 Teziutlán, siguiendo las indicaciones institucionales, estableciendo comunicación permanente con su coordinador(a) y apoyando en las diversas actividades que fortalecen la formación de nuestros alumnos, así como la vida institucional de nuestra universidad.';
     const splitClosing = doc.splitTextToSize(closingText, 155);
-    doc.text(splitClosing, 27, finalY + 8, { align: 'justify' });
 
-    const signatureY = finalY + 8 + splitClosing.length * 4 + 15;
+    // ── Si el cierre + firma no caben antes del pie de página, saltar a página nueva ──
+    let closingY = finalY + 8;
+    const requiredHeight = splitClosing.length * 4 + 15 + SIGNATURE_BLOCK_HEIGHT;
+
+    if (closingY + requiredHeight > FOOTER_SAFE_Y) {
+      doc.addPage();
+      if (imgData) {
+        try { doc.addImage(imgData, 'JPEG', 0, 0, 210, 297); } catch { /* noop */ }
+      }
+      closingY = 30;
+    }
+
+    doc.text(splitClosing, 27, closingY, { align: 'justify' });
+
+    const signatureY = closingY + splitClosing.length * 4 + 15;
 
     // Firma
     doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
