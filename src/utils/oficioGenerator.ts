@@ -11,6 +11,48 @@ const isOddSemesterGroup = (groupName: string): boolean => {
   return ODD_SEMESTERS.includes(groupName.charAt(0));
 };
 
+// ── Control de espacio en la página ───────────────────────────────────────
+// Límite vertical (mm) a partir del cual empieza el arte del pie de página
+// (barra dorada con redes sociales y dirección) dentro de la imagen de fondo.
+// Si el contenido pasa de aquí, se manda a una página nueva en vez de encimarse.
+const FOOTER_SAFE_Y = 245;
+
+// Altura estimada (mm) que ocupa el bloque ATENTAMENTE + frase + nombre + cargo.
+const SIGNATURE_BLOCK_HEIGHT = 42;
+
+const BG_SCALE = 0.97;
+const BG_ORIGINAL_WIDTH = 215.9;
+const BG_ORIGINAL_HEIGHT = 271.4;
+
+const addBackgroundImage = (doc: jsPDF, bgImage: string) => {
+  doc.addImage(
+    bgImage,
+    'JPEG',
+    (BG_ORIGINAL_WIDTH - BG_ORIGINAL_WIDTH * BG_SCALE) / 2,
+    8,
+    BG_ORIGINAL_WIDTH * BG_SCALE,
+    BG_ORIGINAL_HEIGHT * BG_SCALE
+  );
+};
+
+// Si el contenido (closing + firma) no cabe antes del pie de página,
+// agrega una página nueva con el mismo fondo y regresa la posición inicial segura.
+const ensureSpaceForClosingBlock = (
+  doc: jsPDF,
+  currentY: number,
+  closingLinesCount: number,
+  bgImage: string | null
+): number => {
+  const requiredHeight = closingLinesCount * 6 + 15 + SIGNATURE_BLOCK_HEIGHT;
+  if (currentY + requiredHeight <= FOOTER_SAFE_Y) return currentY;
+
+  doc.addPage();
+  if (bgImage) {
+    try { addBackgroundImage(doc, bgImage); } catch { /* noop */ }
+  }
+  return 40;
+};
+
 // Función para formatear fecha a español
 const formatDateToSpanish = (date: Date): string => {
   const months = [
@@ -130,12 +172,10 @@ export const generateOficioFromTemplate = async (teacherId: string, programId?: 
 
     const doc = new jsPDF({ format: 'letter' });
 
+    let bgImage: string | null = null;
     try {
-      const bgImage = await loadImageAsBase64('/images/upnimg.jpg');
-      const scale = 0.97;
-      const originalWidth = 215.9;
-      const originalHeight = 271.4;
-      doc.addImage(bgImage, 'JPEG', (originalWidth - originalWidth * scale) / 2, 8, originalWidth * scale, originalHeight * scale);
+      bgImage = await loadImageAsBase64('/images/upnimg.jpg');
+      addBackgroundImage(doc, bgImage);
     } catch { console.warn('No se pudo cargar imagen de fondo'); }
 
     doc.setFontSize(11); doc.setFont('helvetica', 'bold');
@@ -174,6 +214,10 @@ export const generateOficioFromTemplate = async (teacherId: string, programId?: 
     doc.setFontSize(10);
     const closingText = 'Deseándole el mayor de los éxitos en el desempeño de esta tarea, aprovecho la oportunidad para invitarle a que, en el ejercicio de sus funciones, ponga lo mejor de su esfuerzo y dedicación al servicio de la Universidad Pedagógica Nacional Unidad 212 Teziutlán, siguiendo las indicaciones institucionales, estableciendo comunicación permanente con su coordinador(a) y apoyando en las diversas actividades que fortalecen la formación de nuestros alumnos, así como la vida institucional de nuestra universidad.';
     const splitClosing = doc.splitTextToSize(closingText, 165);
+
+    // ── Si el cierre + firma no caben antes del pie de página, saltar a página nueva ──
+    yPos = ensureSpaceForClosingBlock(doc, yPos, splitClosing.length, bgImage);
+
     doc.text(splitClosing, 25, yPos, { align: 'justify', maxWidth: 165 });
     yPos += splitClosing.length * 6 + 15;
 
@@ -280,12 +324,10 @@ const generateOficioBlob = async (teacherId: string, programId?: string): Promis
 
     const doc = new jsPDF({ format: 'letter' });
 
+    let bgImage: string | null = null;
     try {
-      const bgImage = await loadImageAsBase64('/images/upnimg.jpg');
-      const scale = 0.97;
-      const originalWidth = 215.9;
-      const originalHeight = 271.4;
-      doc.addImage(bgImage, 'JPEG', (originalWidth - originalWidth * scale) / 2, 8, originalWidth * scale, originalHeight * scale);
+      bgImage = await loadImageAsBase64('/images/upnimg.jpg');
+      addBackgroundImage(doc, bgImage);
     } catch { console.warn('No se pudo cargar imagen de fondo'); }
 
     doc.setFontSize(11); doc.setFont('helvetica', 'bold');
@@ -324,6 +366,10 @@ const generateOficioBlob = async (teacherId: string, programId?: string): Promis
     doc.setFontSize(10);
     const closingText = 'Deseándole el mayor de los éxitos en el desempeño de esta tarea, aprovecho la oportunidad para invitarle a que, en el ejercicio de sus funciones, ponga lo mejor de su esfuerzo y dedicación al servicio de la Universidad Pedagógica Nacional Unidad 212 Teziutlán, siguiendo las indicaciones institucionales, estableciendo comunicación permanente con su coordinador(a) y apoyando en las diversas actividades que fortalecen la formación de nuestros alumnos, así como la vida institucional de nuestra universidad.';
     const splitClosing = doc.splitTextToSize(closingText, 165);
+
+    // ── Si el cierre + firma no caben antes del pie de página, saltar a página nueva ──
+    yPos = ensureSpaceForClosingBlock(doc, yPos, splitClosing.length, bgImage);
+
     doc.text(splitClosing, 25, yPos, { align: 'justify', maxWidth: 165 });
     yPos += splitClosing.length * 6 + 15;
 
