@@ -42,7 +42,7 @@ import { ArrowLeft, Plus, Edit, Trash2, Clock, CalendarCheck } from 'lucide-reac
 
 interface MaestriaSabado {
   id: number;
-  name: string;
+  name: string; // Cambiado a 'name' según tu nueva estructura
 }
 
 interface Schedule {
@@ -86,9 +86,18 @@ export default function MaestriaSabadoSchedulePage() {
   }, [id]);
 
   const loadData = async () => {
+    // CORRECCIÓN: Validar que el parámetro id exista y no sea la cadena "undefined"
+    if (!id || id === 'undefined') {
+      console.error('Error: El parámetro ID de la URL no está definido.');
+      toast.error('No se pudo identificar la maestría');
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     try {
-      await Promise.all([loadMaestria(), loadSchedules()]);
+      // Pasamos el id validado a ambas funciones
+      await Promise.all([loadMaestria(id), loadSchedules(id)]);
     } catch (error) {
       console.error('Error loading data:', error);
       toast.error('Error al cargar los datos');
@@ -97,15 +106,23 @@ export default function MaestriaSabadoSchedulePage() {
     }
   };
 
-  const loadMaestria = async () => {
+  // CORRECCIÓN: Recibe el id como argumento y lo parsea de forma segura a entero
+  const loadMaestria = async (maestriaId: string) => {
     try {
+      const parsedId = parseInt(maestriaId, 10);
+      if (isNaN(parsedId)) throw new Error('El ID de la maestría no es un número válido');
+
       const { data, error } = await supabase
         .from('maestrias_sabado')
         .select('id, name')
-        .eq('id', id)
+        .eq('id', parsedId)
         .single();
 
-      if (error) throw error;
+      if (error) {
+        console.error('Error en consulta de maestría:', error);
+        throw error;
+      }
+      
       if (!data) {
         toast.error('Maestría no encontrada');
         navigate('/maestrias-sabado');
@@ -114,23 +131,29 @@ export default function MaestriaSabadoSchedulePage() {
 
       setMaestria(data);
     } catch (error) {
-      console.error('Error loading maestria:', error);
       throw error;
     }
   };
 
-  const loadSchedules = async () => {
+  // CORRECCIÓN: Recibe el id como argumento y lo parsea de forma segura a entero
+  const loadSchedules = async (maestriaId: string) => {
     try {
+      const parsedId = parseInt(maestriaId, 10);
+      if (isNaN(parsedId)) throw new Error('El ID de la maestría no es un número válido');
+
       const { data, error } = await supabase
         .from('maestria_sabado_schedule')
         .select('*')
-        .eq('maestria_id', id)
+        .eq('maestria_id', parsedId)
         .order('start_time');
 
-      if (error) throw error;
+      if (error) {
+        console.error('Error en consulta de horarios:', error);
+        throw error;
+      }
+      
       setSchedules(data || []);
     } catch (error) {
-      console.error('Error loading schedules:', error);
       throw error;
     }
   };
@@ -183,7 +206,6 @@ export default function MaestriaSabadoSchedulePage() {
       newErrors.end_time = 'La hora de fin es requerida';
     }
 
-    // Validar que la hora de inicio sea menor que la hora de fin
     if (formData.start_time && formData.end_time && formData.start_time >= formData.end_time) {
       newErrors.end_time = 'La hora de fin debe ser mayor que la hora de inicio';
     }
@@ -193,12 +215,12 @@ export default function MaestriaSabadoSchedulePage() {
   };
 
   const checkScheduleConflicts = async (start: string, end: string, excludeId?: number): Promise<boolean> => {
+    if (!id) return false;
     try {
-      // Verificar empalmes con otros horarios de la misma maestría
       let query = supabase
         .from('maestria_sabado_schedule')
         .select('*')
-        .eq('maestria_id', id);
+        .eq('maestria_id', parseInt(id, 10));
 
       if (excludeId) {
         query = query.neq('id', excludeId);
@@ -208,12 +230,10 @@ export default function MaestriaSabadoSchedulePage() {
 
       if (error) throw error;
 
-      // Verificar empalmes
       const hasConflict = (data || []).some((schedule: Schedule) => {
         const scheduleStart = schedule.start_time.substring(0, 5);
         const scheduleEnd = schedule.end_time.substring(0, 5);
 
-        // Verificar si hay empalme
         return (
           (start >= scheduleStart && start < scheduleEnd) ||
           (end > scheduleStart && end <= scheduleEnd) ||
@@ -236,10 +256,10 @@ export default function MaestriaSabadoSchedulePage() {
       return;
     }
 
+    if (!id) return;
     setSubmitting(true);
 
     try {
-      // Verificar empalmes antes de guardar
       const hasConflict = await checkScheduleConflicts(
         formData.start_time,
         formData.end_time,
@@ -253,15 +273,14 @@ export default function MaestriaSabadoSchedulePage() {
       }
 
       const scheduleData = {
-        maestria_id: parseInt(id!),
+        maestria_id: parseInt(id, 10),
         subject_name: formData.subject_name.trim(),
-        day_of_week: 6, // Siempre sábado
+        day_of_week: 6,
         start_time: formData.start_time + ':00',
         end_time: formData.end_time + ':00',
       };
 
       if (editingSchedule) {
-        // Actualizar
         const { error } = await supabase
           .from('maestria_sabado_schedule')
           .update(scheduleData)
@@ -270,7 +289,6 @@ export default function MaestriaSabadoSchedulePage() {
         if (error) throw error;
         toast.success('Horario actualizado exitosamente');
       } else {
-        // Crear
         const { error } = await supabase
           .from('maestria_sabado_schedule')
           .insert([scheduleData]);
@@ -280,7 +298,7 @@ export default function MaestriaSabadoSchedulePage() {
       }
 
       closeModal();
-      await loadSchedules();
+      await loadSchedules(id);
     } catch (error: any) {
       console.error('Error saving schedule:', error);
       toast.error(error.message || 'Error al guardar el horario');
@@ -300,7 +318,7 @@ export default function MaestriaSabadoSchedulePage() {
   };
 
   const handleDelete = async () => {
-    if (!deletingSchedule) return;
+    if (!deletingSchedule || !id) return;
 
     try {
       const { error } = await supabase
@@ -312,7 +330,7 @@ export default function MaestriaSabadoSchedulePage() {
 
       toast.success('Horario eliminado exitosamente');
       closeDeleteDialog();
-      await loadSchedules();
+      await loadSchedules(id);
     } catch (error: any) {
       console.error('Error deleting schedule:', error);
       toast.error(error.message || 'Error al eliminar el horario');
@@ -356,7 +374,6 @@ export default function MaestriaSabadoSchedulePage() {
         </Button>
       </div>
 
-      {/* Info sobre horarios */}
       <Card className="dark:bg-slate-800 dark:border-slate-700 bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800">
         <CardContent className="pt-6">
           <div className="flex items-center gap-2 text-blue-800 dark:text-blue-300">
@@ -436,7 +453,6 @@ export default function MaestriaSabadoSchedulePage() {
         </CardContent>
       </Card>
 
-      {/* Modal de Creación/Edición */}
       <Dialog open={isModalOpen} onOpenChange={closeModal}>
         <DialogContent className="sm:max-w-[500px]">
           <form onSubmit={handleSubmit}>
@@ -452,7 +468,6 @@ export default function MaestriaSabadoSchedulePage() {
             </DialogHeader>
 
             <div className="grid gap-4 py-4">
-              {/* Materia */}
               <div className="grid gap-2">
                 <Label htmlFor="subject_name">
                   Nombre de la Materia <span className="text-red-500">*</span>
@@ -471,7 +486,6 @@ export default function MaestriaSabadoSchedulePage() {
                 )}
               </div>
 
-              {/* Hora de Inicio */}
               <div className="grid gap-2">
                 <Label htmlFor="start_time">
                   Hora de Inicio <span className="text-red-500">*</span>
@@ -490,7 +504,6 @@ export default function MaestriaSabadoSchedulePage() {
                 )}
               </div>
 
-              {/* Hora de Fin */}
               <div className="grid gap-2">
                 <Label htmlFor="end_time">
                   Hora de Fin <span className="text-red-500">*</span>
@@ -509,7 +522,6 @@ export default function MaestriaSabadoSchedulePage() {
                 )}
               </div>
 
-              {/* Info sobre el día */}
               <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
                 <p className="text-sm text-blue-800 dark:text-blue-300">
                   <Clock className="w-4 h-4 inline mr-1" />
@@ -539,7 +551,6 @@ export default function MaestriaSabadoSchedulePage() {
         </DialogContent>
       </Dialog>
 
-      {/* Diálogo de Confirmación de Eliminación */}
       <AlertDialog open={isDeleteDialogOpen} onOpenChange={closeDeleteDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
