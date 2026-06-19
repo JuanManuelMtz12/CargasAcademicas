@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 import {
@@ -25,16 +25,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -45,72 +35,60 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Plus, Edit, Trash2, Clock, Users, FileText, CalendarCheck } from 'lucide-react';
-import ManageMaestriaTeachersModal from '@/components/ManageMaestriaTeachersModal';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { ArrowLeft, Plus, Edit, Trash2, Clock, CalendarCheck } from 'lucide-react';
 
 interface MaestriaSabado {
   id: number;
-  nombre: string;
-  sede_id: number | null;
-  coordinador_id: string | null;
-  ciclo_id: number | null;
-  fecha_inicio: string | null;
-  fecha_fin: string | null;
-  descripcion: string | null;
-  activo: boolean;
-  created_at: string;
-  coordinador?: { id: string; name: string } | null;
-  sede?: { id: number; name: string } | null;
-  maestros_count: number;
-  horarios_count: number;
+  name: string;
 }
 
-interface Sede {
+interface Schedule {
   id: number;
-  name: string;
-}
-
-interface Teacher {
-  id: string;
-  name: string;
+  maestria_id: number;
+  subject_name: string;
+  day_of_week: number;
+  start_time: string;
+  end_time: string;
+  created_at: string;
 }
 
 interface FormData {
-  nombre: string;
-  coordinador_id: string;
-  sede_id: string;
+  subject_name: string;
+  start_time: string;
+  end_time: string;
 }
 
-export default function MaestriasSabatinasPage() {
-  const [maestrias, setMaestrias] = useState<MaestriaSabado[]>([]);
-  const [sedes, setSedes] = useState<Sede[]>([]);
-  const [teachers, setTeachers] = useState<Teacher[]>([]);
+export default function MaestriaSabadoSchedulePage() {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const [maestria, setMaestria] = useState<MaestriaSabado | null>(null);
+  const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-  const [editingMaestria, setEditingMaestria] = useState<MaestriaSabado | null>(null);
-  const [deletingMaestria, setDeletingMaestria] = useState<MaestriaSabado | null>(null);
+  const [editingSchedule, setEditingSchedule] = useState<Schedule | null>(null);
+  const [deletingSchedule, setDeletingSchedule] = useState<Schedule | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [isManageTeachersModalOpen, setIsManageTeachersModalOpen] = useState(false);
-  const [managingMaestria, setManagingMaestria] = useState<MaestriaSabado | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  
+
   const [formData, setFormData] = useState<FormData>({
-    nombre: '',
-    coordinador_id: '',
-    sede_id: '',
+    subject_name: '',
+    start_time: '09:00',
+    end_time: '13:00',
   });
 
   const [errors, setErrors] = useState<Partial<Record<keyof FormData, string>>>({});
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [id]);
 
   const loadData = async () => {
     setLoading(true);
     try {
-      await Promise.all([loadMaestrias(), loadSedes(), loadTeachers()]);
+      await Promise.all([loadMaestria(), loadSchedules()]);
     } catch (error) {
       console.error('Error loading data:', error);
       toast.error('Error al cargar los datos');
@@ -119,96 +97,61 @@ export default function MaestriasSabatinasPage() {
     }
   };
 
-  const loadMaestrias = async () => {
+  const loadMaestria = async () => {
     try {
-      const { data: maestriasData, error: maestriasError } = await supabase
+      const { data, error } = await supabase
         .from('maestrias_sabado')
-        .select(`
-          *,
-          coordinador:coordinador_id (id, name),
-          sede:sede_id (id, name)
-        `)
-        .order('nombre');
+        .select('id, name')
+        .eq('id', id)
+        .single();
 
-      if (maestriasError) throw maestriasError;
+      if (error) throw error;
+      if (!data) {
+        toast.error('Maestría no encontrada');
+        navigate('/maestrias-sabado');
+        return;
+      }
 
-      // Obtener conteos para cada maestría
-      const maestriasWithCounts = await Promise.all(
-        (maestriasData || []).map(async (maestria) => {
-          // Contar maestros asignados
-          const { count: maestrosCount } = await supabase
-            .from('teacher_maestria_sabado')
-            .select('*', { count: 'exact', head: true })
-            .eq('maestria_id', maestria.id);
-
-          // Contar horarios
-          const { count: horariosCount } = await supabase
-            .from('maestria_sabado_schedule')
-            .select('*', { count: 'exact', head: true })
-            .eq('maestria_id', maestria.id);
-
-          return {
-            ...maestria,
-            maestros_count: maestrosCount || 0,
-            horarios_count: horariosCount || 0,
-          };
-        })
-      );
-
-      setMaestrias(maestriasWithCounts);
+      setMaestria(data);
     } catch (error) {
-      console.error('Error loading maestrias:', error);
+      console.error('Error loading maestria:', error);
       throw error;
     }
   };
 
-  const loadSedes = async () => {
+  const loadSchedules = async () => {
     try {
       const { data, error } = await supabase
-        .from('sedes')
+        .from('maestria_sabado_schedule')
         .select('*')
-        .order('name');
+        .eq('maestria_id', id)
+        .order('start_time');
 
       if (error) throw error;
-      setSedes(data || []);
+      setSchedules(data || []);
     } catch (error) {
-      console.error('Error loading sedes:', error);
-      throw error;
-    }
-  };
-
-  const loadTeachers = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('teachers')
-        .select('*')
-        .order('name');
-
-      if (error) throw error;
-      setTeachers(data || []);
-    } catch (error) {
-      console.error('Error loading teachers:', error);
+      console.error('Error loading schedules:', error);
       throw error;
     }
   };
 
   const openCreateModal = () => {
-    setEditingMaestria(null);
+    setEditingSchedule(null);
     setFormData({
-      nombre: '',
-      coordinador_id: '',
-      sede_id: '',
+      subject_name: '',
+      start_time: '09:00',
+      end_time: '13:00',
     });
     setErrors({});
     setIsModalOpen(true);
   };
 
-  const openEditModal = (maestria: MaestriaSabado) => {
-    setEditingMaestria(maestria);
+  const openEditModal = (schedule: Schedule) => {
+    setEditingSchedule(schedule);
     setFormData({
-      nombre: maestria.nombre,
-      coordinador_id: maestria.coordinador_id || '',
-      sede_id: maestria.sede_id?.toString() || '',
+      subject_name: schedule.subject_name,
+      start_time: schedule.start_time.substring(0, 5),
+      end_time: schedule.end_time.substring(0, 5),
     });
     setErrors({});
     setIsModalOpen(true);
@@ -216,11 +159,11 @@ export default function MaestriasSabatinasPage() {
 
   const closeModal = () => {
     setIsModalOpen(false);
-    setEditingMaestria(null);
+    setEditingSchedule(null);
     setFormData({
-      nombre: '',
-      coordinador_id: '',
-      sede_id: '',
+      subject_name: '',
+      start_time: '09:00',
+      end_time: '13:00',
     });
     setErrors({});
   };
@@ -228,20 +171,61 @@ export default function MaestriasSabatinasPage() {
   const validateForm = (): boolean => {
     const newErrors: Partial<Record<keyof FormData, string>> = {};
 
-    if (!formData.nombre.trim()) {
-      newErrors.nombre = 'El nombre es requerido';
+    if (!formData.subject_name.trim()) {
+      newErrors.subject_name = 'El nombre de la materia es requerido';
     }
 
-    if (!formData.sede_id) {
-      newErrors.sede_id = 'La sede es requerida';
+    if (!formData.start_time) {
+      newErrors.start_time = 'La hora de inicio es requerida';
     }
 
-    if (!formData.coordinador_id) {
-      newErrors.coordinador_id = 'El coordinador es requerido';
+    if (!formData.end_time) {
+      newErrors.end_time = 'La hora de fin es requerida';
+    }
+
+    // Validar que la hora de inicio sea menor que la hora de fin
+    if (formData.start_time && formData.end_time && formData.start_time >= formData.end_time) {
+      newErrors.end_time = 'La hora de fin debe ser mayor que la hora de inicio';
     }
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
+  };
+
+  const checkScheduleConflicts = async (start: string, end: string, excludeId?: number): Promise<boolean> => {
+    try {
+      // Verificar empalmes con otros horarios de la misma maestría
+      let query = supabase
+        .from('maestria_sabado_schedule')
+        .select('*')
+        .eq('maestria_id', id);
+
+      if (excludeId) {
+        query = query.neq('id', excludeId);
+      }
+
+      const { data, error } = await query;
+
+      if (error) throw error;
+
+      // Verificar empalmes
+      const hasConflict = (data || []).some((schedule: Schedule) => {
+        const scheduleStart = schedule.start_time.substring(0, 5);
+        const scheduleEnd = schedule.end_time.substring(0, 5);
+
+        // Verificar si hay empalme
+        return (
+          (start >= scheduleStart && start < scheduleEnd) ||
+          (end > scheduleStart && end <= scheduleEnd) ||
+          (start <= scheduleStart && end >= scheduleEnd)
+        );
+      });
+
+      return hasConflict;
+    } catch (error) {
+      console.error('Error checking conflicts:', error);
+      return false;
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -255,113 +239,85 @@ export default function MaestriasSabatinasPage() {
     setSubmitting(true);
 
     try {
-      const maestriaData = {
-        nombre: formData.nombre.trim(),
-        coordinador_id: formData.coordinador_id || null,
-        sede_id: formData.sede_id || null,
+      // Verificar empalmes antes de guardar
+      const hasConflict = await checkScheduleConflicts(
+        formData.start_time,
+        formData.end_time,
+        editingSchedule?.id
+      );
+
+      if (hasConflict) {
+        toast.error('El horario se empalma con otro horario existente');
+        setSubmitting(false);
+        return;
+      }
+
+      const scheduleData = {
+        maestria_id: parseInt(id!),
+        subject_name: formData.subject_name.trim(),
+        day_of_week: 6, // Siempre sábado
+        start_time: formData.start_time + ':00',
+        end_time: formData.end_time + ':00',
       };
 
-      if (editingMaestria) {
+      if (editingSchedule) {
         // Actualizar
         const { error } = await supabase
-          .from('maestrias_sabado')
-          .update(maestriaData)
-          .eq('id', editingMaestria.id);
+          .from('maestria_sabado_schedule')
+          .update(scheduleData)
+          .eq('id', editingSchedule.id);
 
         if (error) throw error;
-        toast.success('Maestría actualizada exitosamente');
+        toast.success('Horario actualizado exitosamente');
       } else {
         // Crear
         const { error } = await supabase
-          .from('maestrias_sabado')
-          .insert([maestriaData]);
+          .from('maestria_sabado_schedule')
+          .insert([scheduleData]);
 
         if (error) throw error;
-        toast.success('Maestría creada exitosamente');
+        toast.success('Horario creado exitosamente');
       }
 
       closeModal();
-      await loadMaestrias();
+      await loadSchedules();
     } catch (error: any) {
-      console.error('Error saving maestria:', error);
-      toast.error(error.message || 'Error al guardar la maestría');
+      console.error('Error saving schedule:', error);
+      toast.error(error.message || 'Error al guardar el horario');
     } finally {
       setSubmitting(false);
     }
   };
 
-  const openDeleteDialog = (maestria: MaestriaSabado) => {
-    setDeletingMaestria(maestria);
+  const openDeleteDialog = (schedule: Schedule) => {
+    setDeletingSchedule(schedule);
     setIsDeleteDialogOpen(true);
   };
 
   const closeDeleteDialog = () => {
     setIsDeleteDialogOpen(false);
-    setDeletingMaestria(null);
+    setDeletingSchedule(null);
   };
 
   const handleDelete = async () => {
-    if (!deletingMaestria) return;
+    if (!deletingSchedule) return;
 
     try {
-      // Verificar si hay relaciones que impidan el borrado
-      const { count: horariosCount } = await supabase
-        .from('maestria_sabado_schedule')
-        .select('*', { count: 'exact', head: true })
-        .eq('maestria_id', deletingMaestria.id);
-
-      if (horariosCount && horariosCount > 0) {
-        toast.error('No se puede eliminar la maestría porque tiene horarios asociados');
-        closeDeleteDialog();
-        return;
-      }
-
-      const { count: maestrosCount } = await supabase
-        .from('teacher_maestria_sabado')
-        .select('*', { count: 'exact', head: true })
-        .eq('maestria_id', deletingMaestria.id);
-
-      if (maestrosCount && maestrosCount > 0) {
-        toast.error('No se puede eliminar la maestría porque tiene maestros asignados');
-        closeDeleteDialog();
-        return;
-      }
-
       const { error } = await supabase
-        .from('maestrias_sabado')
+        .from('maestria_sabado_schedule')
         .delete()
-        .eq('id', deletingMaestria.id);
+        .eq('id', deletingSchedule.id);
 
       if (error) throw error;
 
-      toast.success('Maestría eliminada exitosamente');
+      toast.success('Horario eliminado exitosamente');
       closeDeleteDialog();
-      await loadMaestrias();
+      await loadSchedules();
     } catch (error: any) {
-      console.error('Error deleting maestria:', error);
-      toast.error(error.message || 'Error al eliminar la maestría');
+      console.error('Error deleting schedule:', error);
+      toast.error(error.message || 'Error al eliminar el horario');
     }
   };
-
-  const openManageTeachersModal = (maestria: MaestriaSabado) => {
-    setManagingMaestria(maestria);
-    setIsManageTeachersModalOpen(true);
-  };
-
-  const closeManageTeachersModal = () => {
-    setIsManageTeachersModalOpen(false);
-    setManagingMaestria(null);
-  };
-
-  const handleTeachersUpdate = async () => {
-    // Recargar solo las maestrías para actualizar el contador
-    await loadMaestrias();
-  };
-
-  // Filtrar maestrías por búsqueda
-  const filteredMaestrias = maestrias.filter((maestria) =>
-    maestria.nombre.toLowerCase().includes(searchTerm.toLowerCase())
-  );
 
   if (loading) {
     return (
@@ -371,42 +327,52 @@ export default function MaestriasSabatinasPage() {
     );
   }
 
+  if (!maestria) {
+    return null;
+  }
+
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-slate-100">Maestrías Sabatinas</h1>
+          <Button
+            variant="ghost"
+            onClick={() => navigate('/maestrias-sabado')}
+            className="mb-2 gap-2"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Volver a Maestrías Sabatinas
+          </Button>
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-slate-100">
+            Horarios - {maestria.name}
+          </h1>
           <p className="text-gray-600 dark:text-slate-400 mt-1">
-            Gestión de maestrías que se imparten los días sábado
+            Gestión de horarios sabatinos (9:00 AM - 1:00 PM)
           </p>
         </div>
         <Button onClick={openCreateModal} className="gap-2">
           <Plus className="w-4 h-4" />
-          Nueva Maestría
+          Nuevo Horario
         </Button>
       </div>
 
-      {/* Búsqueda */}
-      <Card className="dark:bg-slate-800 dark:border-slate-700">
+      {/* Info sobre horarios */}
+      <Card className="dark:bg-slate-800 dark:border-slate-700 bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800">
         <CardContent className="pt-6">
-          <div className="flex gap-4">
-            <div className="flex-1">
-              <Input
-                placeholder="Buscar por nombre de maestría..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full"
-              />
-            </div>
+          <div className="flex items-center gap-2 text-blue-800 dark:text-blue-300">
+            <CalendarCheck className="w-5 h-5" />
+            <p className="font-medium">
+              Todas las clases se imparten los días sábado en el horario de 9:00 AM a 1:00 PM
+            </p>
           </div>
         </CardContent>
       </Card>
 
       <Card className="dark:bg-slate-800 dark:border-slate-700">
         <CardHeader>
-          <CardTitle>Lista de Maestrías Sabatinas</CardTitle>
+          <CardTitle>Lista de Horarios</CardTitle>
           <CardDescription>
-            {filteredMaestrias.length} maestría{filteredMaestrias.length !== 1 ? 's' : ''} encontrada{filteredMaestrias.length !== 1 ? 's' : ''}
+            {schedules.length} horario{schedules.length !== 1 ? 's' : ''} registrado{schedules.length !== 1 ? 's' : ''}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -414,75 +380,37 @@ export default function MaestriasSabatinasPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Nombre</TableHead>
-                  <TableHead>Sede</TableHead>
-                  <TableHead>Coordinador</TableHead>
-                  <TableHead className="text-center">
-                    <Users className="w-4 h-4 inline mr-1" />
-                    Maestros
-                  </TableHead>
-                  <TableHead className="text-center">
-                    <Clock className="w-4 h-4 inline mr-1" />
-                    Horarios
-                  </TableHead>
-                  <TableHead>Estado</TableHead>
+                  <TableHead>Materia</TableHead>
+                  <TableHead>Día</TableHead>
+                  <TableHead>Hora Inicio</TableHead>
+                  <TableHead>Hora Fin</TableHead>
                   <TableHead className="text-right">Acciones</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredMaestrias.length === 0 ? (
+                {schedules.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center text-gray-500 py-8">
-                      No hay maestrías registradas
+                    <TableCell colSpan={5} className="text-center text-gray-500 py-8">
+                      No hay horarios registrados
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filteredMaestrias.map((maestria) => (
-                    <TableRow key={maestria.id}>
-                      <TableCell className="font-medium">{maestria.nombre}</TableCell>
+                  schedules.map((schedule) => (
+                    <TableRow key={schedule.id}>
+                      <TableCell className="font-medium">{schedule.subject_name}</TableCell>
                       <TableCell>
-                        {maestria.sede ? maestria.sede.name : '-'}
-                      </TableCell>
-                      <TableCell>
-                        {maestria.coordinador ? maestria.coordinador.name : '-'}
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <button
-                          onClick={() => openManageTeachersModal(maestria)}
-                          className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-green-100 text-green-800 text-sm font-semibold hover:bg-green-200 hover:scale-110 transition-all cursor-pointer"
-                          title="Gestionar maestros"
-                        >
-                          {maestria.maestros_count}
-                        </button>
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-purple-100 text-purple-800 text-sm font-semibold">
-                          {maestria.horarios_count}
+                        <span className="px-2 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-800">
+                          Sábado
                         </span>
                       </TableCell>
-                      <TableCell>
-                        <span
-                          className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                            maestria.activo
-                              ? 'bg-green-100 text-green-800'
-                              : 'bg-gray-100 text-gray-800'
-                          }`}
-                        >
-                          {maestria.activo ? 'Activa' : 'Inactiva'}
-                        </span>
-                      </TableCell>
+                      <TableCell>{schedule.start_time.substring(0, 5)}</TableCell>
+                      <TableCell>{schedule.end_time.substring(0, 5)}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
-                          <Link to={`/maestrias-sabado/${maestria.id}/horarios`}>
-                            <Button variant="outline" size="sm" className="gap-1">
-                              <Clock className="w-4 h-4" />
-                              Horarios
-                            </Button>
-                          </Link>
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => openEditModal(maestria)}
+                            onClick={() => openEditModal(schedule)}
                             className="gap-1"
                           >
                             <Edit className="w-4 h-4" />
@@ -491,7 +419,7 @@ export default function MaestriasSabatinasPage() {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => openDeleteDialog(maestria)}
+                            onClick={() => openDeleteDialog(schedule)}
                             className="gap-1 text-red-600 hover:text-red-700 hover:bg-red-50"
                           >
                             <Trash2 className="w-4 h-4" />
@@ -514,96 +442,78 @@ export default function MaestriasSabatinasPage() {
           <form onSubmit={handleSubmit}>
             <DialogHeader>
               <DialogTitle>
-                {editingMaestria ? 'Editar Maestría' : 'Nueva Maestría Sabatina'}
+                {editingSchedule ? 'Editar Horario' : 'Nuevo Horario'}
               </DialogTitle>
               <DialogDescription>
-                {editingMaestria
-                  ? 'Modifica los datos de la maestría sabatina'
-                  : 'Completa los datos para crear una nueva maestría sabatina'}
+                {editingSchedule
+                  ? 'Modifica los datos del horario'
+                  : 'Completa los datos para crear un nuevo horario sabatino'}
               </DialogDescription>
             </DialogHeader>
 
             <div className="grid gap-4 py-4">
-              {/* Nombre */}
+              {/* Materia */}
               <div className="grid gap-2">
-                <Label htmlFor="name">
-                  Nombre de la Maestría <span className="text-red-500">*</span>
+                <Label htmlFor="subject_name">
+                  Nombre de la Materia <span className="text-red-500">*</span>
                 </Label>
                 <Input
-                  id="nombre"
-                  value={formData.nombre}
+                  id="subject_name"
+                  value={formData.subject_name}
                   onChange={(e) =>
-                    setFormData({ ...formData, nombre: e.target.value })
+                    setFormData({ ...formData, subject_name: e.target.value })
                   }
-                  placeholder="Ej: Maestría en Educación Básica"
-                  className={errors.nombre ? 'border-red-500' : ''}
+                  placeholder="Ej: Metodología de la Investigación"
+                  className={errors.subject_name ? 'border-red-500' : ''}
                 />
-                {errors.nombre && (
-                  <p className="text-sm text-red-500">{errors.nombre}</p>
+                {errors.subject_name && (
+                  <p className="text-sm text-red-500">{errors.subject_name}</p>
                 )}
               </div>
 
-              {/* Sede */}
+              {/* Hora de Inicio */}
               <div className="grid gap-2">
-                <Label htmlFor="sede">
-                  Sede <span className="text-red-500">*</span>
+                <Label htmlFor="start_time">
+                  Hora de Inicio <span className="text-red-500">*</span>
                 </Label>
-                <Select
-                  value={formData.sede_id}
-                  onValueChange={(value) =>
-                    setFormData({ ...formData, sede_id: value })
+                <Input
+                  id="start_time"
+                  type="time"
+                  value={formData.start_time}
+                  onChange={(e) =>
+                    setFormData({ ...formData, start_time: e.target.value })
                   }
-                >
-                  <SelectTrigger className={errors.sede_id ? 'border-red-500' : ''}>
-                    <SelectValue placeholder="Selecciona la sede" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {sedes.map((sede) => (
-                      <SelectItem key={sede.id} value={sede.id.toString()}>
-                        {sede.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {errors.sede_id && (
-                  <p className="text-sm text-red-500">{errors.sede_id}</p>
+                  className={errors.start_time ? 'border-red-500' : ''}
+                />
+                {errors.start_time && (
+                  <p className="text-sm text-red-500">{errors.start_time}</p>
                 )}
               </div>
 
-              {/* Coordinador */}
+              {/* Hora de Fin */}
               <div className="grid gap-2">
-                <Label htmlFor="coordinator">
-                  Coordinador <span className="text-red-500">*</span>
+                <Label htmlFor="end_time">
+                  Hora de Fin <span className="text-red-500">*</span>
                 </Label>
-                <Select
-                  value={formData.coordinador_id}
-                  onValueChange={(value) =>
-                    setFormData({ ...formData, coordinador_id: value })
+                <Input
+                  id="end_time"
+                  type="time"
+                  value={formData.end_time}
+                  onChange={(e) =>
+                    setFormData({ ...formData, end_time: e.target.value })
                   }
-                >
-                  <SelectTrigger
-                    className={errors.coordinador_id ? 'border-red-500' : ''}
-                  >
-                    <SelectValue placeholder="Selecciona el coordinador" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {teachers.map((teacher) => (
-                      <SelectItem key={teacher.id} value={teacher.id}>
-                        {teacher.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {errors.coordinador_id && (
-                  <p className="text-sm text-red-500">{errors.coordinador_id}</p>
+                  className={errors.end_time ? 'border-red-500' : ''}
+                />
+                {errors.end_time && (
+                  <p className="text-sm text-red-500">{errors.end_time}</p>
                 )}
               </div>
 
-              {/* Info sobre horarios */}
+              {/* Info sobre el día */}
               <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
                 <p className="text-sm text-blue-800 dark:text-blue-300">
-                  <CalendarCheck className="w-4 h-4 inline mr-1" />
-                  Las clases se imparten los días sábado de 9:00 AM a 1:00 PM
+                  <Clock className="w-4 h-4 inline mr-1" />
+                  El horario se asignará automáticamente para los días sábado
                 </p>
               </div>
             </div>
@@ -620,25 +530,14 @@ export default function MaestriasSabatinasPage() {
               <Button type="submit" disabled={submitting}>
                 {submitting
                   ? 'Guardando...'
-                  : editingMaestria
+                  : editingSchedule
                   ? 'Actualizar'
-                  : 'Crear Maestría'}
+                  : 'Crear Horario'}
               </Button>
             </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
-
-      {/* Modal de Gestión de Maestros */}
-      {managingMaestria && (
-        <ManageMaestriaTeachersModal
-          isOpen={isManageTeachersModalOpen}
-          onClose={closeManageTeachersModal}
-          maestriaId={managingMaestria.id}
-          maestriaName={managingMaestria.nombre}
-          onUpdate={handleTeachersUpdate}
-        />
-      )}
 
       {/* Diálogo de Confirmación de Eliminación */}
       <AlertDialog open={isDeleteDialogOpen} onOpenChange={closeDeleteDialog}>
@@ -646,8 +545,8 @@ export default function MaestriasSabatinasPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
             <AlertDialogDescription>
-              Esta acción no se puede deshacer. Se eliminará permanentemente la
-              maestría <strong>{deletingMaestria?.nombre}</strong>.
+              Esta acción no se puede deshacer. Se eliminará permanentemente el
+              horario de <strong>{deletingSchedule?.subject_name}</strong>.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
