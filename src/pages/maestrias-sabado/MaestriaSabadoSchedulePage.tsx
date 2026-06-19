@@ -41,13 +41,13 @@ import { Label } from '@/components/ui/label';
 import { ArrowLeft, Plus, Edit, Trash2, Clock, CalendarCheck } from 'lucide-react';
 
 interface MaestriaSabado {
-  id: number;
-  nombre: string; // Versión con 'nombre'
+  id: string; // CORRECCIÓN: Cambiado a string porque en Supabase es un UUID
+  name: string;
 }
 
 interface Schedule {
-  id: number;
-  maestria_id: number;
+  id: string; // CORRECCIÓN: Cambiado a string por el uso de UUID
+  maestria_id: string; // CORRECCIÓN: UUID string
   subject_name: string;
   day_of_week: number;
   start_time: string;
@@ -86,9 +86,8 @@ export default function MaestriaSabadoSchedulePage() {
   }, [id]);
 
   const loadData = async () => {
-    // Protección para evitar peticiones rotas con IDs 'undefined'
     if (!id || id === 'undefined') {
-      console.error('Error: El parámetro ID de la URL no se encuentra definido.');
+      console.error('Error: El parámetro "id" no está definido en la URL.');
       toast.error('No se pudo identificar la maestría seleccionada');
       setLoading(false);
       return;
@@ -96,6 +95,7 @@ export default function MaestriaSabadoSchedulePage() {
 
     setLoading(true);
     try {
+      // Pasamos el id (UUID string) sin parsear numéricamente
       await Promise.all([loadMaestria(id), loadSchedules(id)]);
     } catch (error) {
       console.error('Error loading data:', error);
@@ -107,16 +107,17 @@ export default function MaestriaSabadoSchedulePage() {
 
   const loadMaestria = async (maestriaId: string) => {
     try {
-      const parsedId = parseInt(maestriaId, 10);
-      if (isNaN(parsedId)) throw new Error('ID no numérico');
-
       const { data, error } = await supabase
-        .from('maestrias_sabado')
-        .select('id, nombre') // Filtro por nombre
-        .eq('id', parsedId)
+        .from('maestria_sabado') // CORRECCIÓN: Nombre exacto de tu tabla en singular
+        .select('id, name')
+        .eq('id', maestriaId) // Filtro directo usando el string del UUID
         .single();
 
-      if (error) throw error;
+      if (error) {
+        console.error('Error de Supabase en loadMaestria:', error);
+        throw error;
+      }
+      
       if (!data) {
         toast.error('Maestría no encontrada');
         navigate('/maestrias-sabado');
@@ -125,26 +126,25 @@ export default function MaestriaSabadoSchedulePage() {
 
       setMaestria(data);
     } catch (error) {
-      console.error('Error loading maestria:', error);
       throw error;
     }
   };
 
   const loadSchedules = async (maestriaId: string) => {
     try {
-      const parsedId = parseInt(maestriaId, 10);
-      if (isNaN(parsedId)) throw new Error('ID no numérico');
-
       const { data, error } = await supabase
         .from('maestria_sabado_schedule')
         .select('*')
-        .eq('maestria_id', parsedId)
+        .eq('maestria_id', maestriaId) // Filtro directo usando el string del UUID
         .order('start_time');
 
-      if (error) throw error;
+      if (error) {
+        console.error('Error de Supabase en loadSchedules:', error);
+        throw error;
+      }
+      
       setSchedules(data || []);
     } catch (error) {
-      console.error('Error loading schedules:', error);
       throw error;
     }
   };
@@ -205,13 +205,13 @@ export default function MaestriaSabadoSchedulePage() {
     return Object.keys(newErrors).length === 0;
   };
 
-  const checkScheduleConflicts = async (start: string, end: string, excludeId?: number): Promise<boolean> => {
+  const checkScheduleConflicts = async (start: string, end: string, excludeId?: string): Promise<boolean> => {
     if (!id) return false;
     try {
       let query = supabase
         .from('maestria_sabado_schedule')
         .select('*')
-        .eq('maestria_id', parseInt(id, 10));
+        .eq('maestria_id', id);
 
       if (excludeId) {
         query = query.neq('id', excludeId);
@@ -263,7 +263,7 @@ export default function MaestriaSabadoSchedulePage() {
       }
 
       const scheduleData = {
-        maestria_id: parseInt(id, 10),
+        maestria_id: id, // Guardamos el UUID nativo directamente
         subject_name: formData.subject_name.trim(),
         day_of_week: 6,
         start_time: formData.start_time + ':00',
@@ -341,12 +341,16 @@ export default function MaestriaSabadoSchedulePage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <Button variant="ghost" onClick={() => navigate('/maestrias-sabado')} className="mb-2 gap-2">
+          <Button
+            variant="ghost"
+            onClick={() => navigate('/maestrias-sabado')}
+            className="mb-2 gap-2"
+          >
             <ArrowLeft className="w-4 h-4" />
             Volver a Maestrías Sabatinas
           </Button>
           <h1 className="text-3xl font-bold text-gray-900 dark:text-slate-100">
-            Horarios - {maestria.nombre}
+            Horarios - {maestria.name}
           </h1>
           <p className="text-gray-600 dark:text-slate-400 mt-1">
             Gestión de horarios sabatinos (9:00 AM - 1:00 PM)
@@ -408,11 +412,21 @@ export default function MaestriaSabadoSchedulePage() {
                       <TableCell>{schedule.end_time.substring(0, 5)}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
-                          <Button variant="outline" size="sm" onClick={() => openEditModal(schedule)} className="gap-1">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openEditModal(schedule)}
+                            className="gap-1"
+                          >
                             <Edit className="w-4 h-4" />
                             Editar
                           </Button>
-                          <Button variant="outline" size="sm" onClick={() => openDeleteDialog(schedule)} className="gap-1 text-red-600 hover:text-red-700 hover:bg-red-50">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openDeleteDialog(schedule)}
+                            className="gap-1 text-red-600 hover:text-red-700 hover:bg-red-50"
+                          >
                             <Trash2 className="w-4 h-4" />
                             Eliminar
                           </Button>
@@ -431,35 +445,95 @@ export default function MaestriaSabadoSchedulePage() {
         <DialogContent className="sm:max-w-[500px]">
           <form onSubmit={handleSubmit}>
             <DialogHeader>
-              <DialogTitle>{editingSchedule ? 'Editar Horario' : 'Nuevo Horario'}</DialogTitle>
+              <DialogTitle>
+                {editingSchedule ? 'Editar Horario' : 'Nuevo Horario'}
+              </DialogTitle>
               <DialogDescription>
-                {editingSchedule ? 'Modifica los datos del horario' : 'Completa los datos para crear un nuevo horario sabatino'}
+                {editingSchedule
+                  ? 'Modifica los datos del horario'
+                  : 'Completa los datos para crear un nuevo horario sabatino'}
               </DialogDescription>
             </DialogHeader>
 
             <div className="grid gap-4 py-4">
               <div className="grid gap-2">
-                <Label htmlFor="subject_name">Nombre de la Materia <span className="text-red-500">*</span></Label>
-                <Input id="subject_name" value={formData.subject_name} onChange={(e) => setFormData({ ...formData, subject_name: e.target.value })} placeholder="Ej: Metodología de la Investigación" className={errors.subject_name ? 'border-red-500' : ''} />
-                {errors.subject_name && <p className="text-sm text-red-500">{errors.subject_name}</p>}
+                <Label htmlFor="subject_name">
+                  Nombre de la Materia <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="subject_name"
+                  value={formData.subject_name}
+                  onChange={(e) =>
+                    setFormData({ ...formData, subject_name: e.target.value })
+                  }
+                  placeholder="Ej: Metodología de la Investigación"
+                  className={errors.subject_name ? 'border-red-500' : ''}
+                />
+                {errors.subject_name && (
+                  <p className="text-sm text-red-500">{errors.subject_name}</p>
+                )}
               </div>
 
               <div className="grid gap-2">
-                <Label htmlFor="start_time">Hora de Inicio <span className="text-red-500">*</span></Label>
-                <Input id="start_time" type="time" value={formData.start_time} onChange={(e) => setFormData({ ...formData, start_time: e.target.value })} className={errors.start_time ? 'border-red-500' : ''} />
-                {errors.start_time && <p className="text-sm text-red-500">{errors.start_time}</p>}
+                <Label htmlFor="start_time">
+                  Hora de Inicio <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="start_time"
+                  type="time"
+                  value={formData.start_time}
+                  onChange={(e) =>
+                    setFormData({ ...formData, start_time: e.target.value })
+                  }
+                  className={errors.start_time ? 'border-red-500' : ''}
+                />
+                {errors.start_time && (
+                  <p className="text-sm text-red-500">{errors.start_time}</p>
+                )}
               </div>
 
               <div className="grid gap-2">
-                <Label htmlFor="end_time">Hora de Fin <span className="text-red-500">*</span></Label>
-                <Input id="end_time" type="time" value={formData.end_time} onChange={(e) => setFormData({ ...formData, end_time: e.target.value })} className={errors.end_time ? 'border-red-500' : ''} />
-                {errors.end_time && <p className="text-sm text-red-500">{errors.end_time}</p>}
+                <Label htmlFor="end_time">
+                  Hora de Fin <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="end_time"
+                  type="time"
+                  value={formData.end_time}
+                  onChange={(e) =>
+                    setFormData({ ...formData, end_time: e.target.value })
+                  }
+                  className={errors.end_time ? 'border-red-500' : ''}
+                />
+                {errors.end_time && (
+                  <p className="text-sm text-red-500">{errors.end_time}</p>
+                )}
+              </div>
+
+              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
+                <p className="text-sm text-blue-800 dark:text-blue-300">
+                  <Clock className="w-4 h-4 inline mr-1" />
+                  El horario se asignará automáticamente para los días sábado
+                </p>
               </div>
             </div>
 
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={closeModal} disabled={submitting}>Cancelar</Button>
-              <Button type="submit" disabled={submitting}>{submitting ? 'Guardando...' : editingSchedule ? 'Actualizar' : 'Crear Horario'}</Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={closeModal}
+                disabled={submitting}
+              >
+                Cancelar
+              </Button>
+              <Button type="submit" disabled={submitting}>
+                {submitting
+                  ? 'Guardando...'
+                  : editingSchedule
+                  ? 'Actualizar'
+                  : 'Crear Horario'}
+              </Button>
             </DialogFooter>
           </form>
         </DialogContent>
@@ -470,12 +544,18 @@ export default function MaestriaSabadoSchedulePage() {
           <AlertDialogHeader>
             <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
             <AlertDialogDescription>
-              Esta acción no se puede deshacer. Se eliminará el horario de <strong>{deletingSchedule?.subject_name}</strong>.
+              Esta acción no se puede deshacer. Se eliminará permanentemente el
+              horario de <strong>{deletingSchedule?.subject_name}</strong>.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} className="bg-red-600 hover:bg-red-700">Eliminar</AlertDialogAction>
+            <AlertDialogAction
+              onClick={handleDelete}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              Eliminar
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
