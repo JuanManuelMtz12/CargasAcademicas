@@ -102,19 +102,20 @@ export default function MaestriaSabadoSchedulePage() {
       const { data, error } = await supabase
         .from('maestrias_sabado')
         .select('id, nombre')
-        .eq('id', id)
+        .eq('id', id) // o parseInt(id!) si es numérico
         .single();
 
-      if (error) throw error;
+      if (error) {
+        console.error("Detalle Error Maestria:", error); // <-- CORRECCIÓN PARA VER EL ERROR REAL
+        throw error;
+      }
       if (!data) {
         toast.error('Maestría no encontrada');
         navigate('/maestrias-sabado');
         return;
       }
-
       setMaestria(data);
     } catch (error) {
-      console.error('Error loading maestria:', error);
       throw error;
     }
   };
@@ -124,13 +125,15 @@ export default function MaestriaSabadoSchedulePage() {
       const { data, error } = await supabase
         .from('maestria_sabado_schedule')
         .select('*')
-        .eq('maestria_id', id)
+        .eq('maestria_id', id) // o parseInt(id!) si es numérico
         .order('start_time');
 
-      if (error) throw error;
+      if (error) {
+        console.error("Detalle Error Horarios:", error); // <-- CORRECCIÓN PARA VER EL ERROR REAL
+        throw error;
+      }
       setSchedules(data || []);
     } catch (error) {
-      console.error('Error loading schedules:', error);
       throw error;
     }
   };
