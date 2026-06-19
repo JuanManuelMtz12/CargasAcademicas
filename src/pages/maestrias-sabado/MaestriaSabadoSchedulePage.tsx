@@ -41,13 +41,13 @@ import { Label } from '@/components/ui/label';
 import { ArrowLeft, Plus, Edit, Trash2, Clock, CalendarCheck } from 'lucide-react';
 
 interface MaestriaSabado {
-  id: string; // CORRECCIÓN: Cambiado a string porque en Supabase es un UUID
+  id: string; // CONFIGURACIÓN: Declarado como string para dar soporte al formato UUID
   name: string;
 }
 
 interface Schedule {
-  id: string; // CORRECCIÓN: Cambiado a string por el uso de UUID
-  maestria_id: string; // CORRECCIÓN: UUID string
+  id: string; // CONFIGURACIÓN: Declarado como string para dar soporte al formato UUID
+  maestria_id: string; // CONFIGURACIÓN: Identificador UUID de relación externa
   subject_name: string;
   day_of_week: number;
   start_time: string;
@@ -87,7 +87,7 @@ export default function MaestriaSabadoSchedulePage() {
 
   const loadData = async () => {
     if (!id || id === 'undefined') {
-      console.error('Error: El parámetro "id" no está definido en la URL.');
+      console.error('Error crítico de enrutamiento: El parámetro "id" no está definido en la URL.');
       toast.error('No se pudo identificar la maestría seleccionada');
       setLoading(false);
       return;
@@ -95,10 +95,10 @@ export default function MaestriaSabadoSchedulePage() {
 
     setLoading(true);
     try {
-      // Pasamos el id (UUID string) sin parsear numéricamente
+      // Se delega el UUID directamente a las llamadas correspondientes
       await Promise.all([loadMaestria(id), loadSchedules(id)]);
     } catch (error) {
-      console.error('Error loading data:', error);
+      console.error('Error general al cargar los flujos de la vista:', error);
       toast.error('Error al cargar los datos');
     } finally {
       setLoading(false);
@@ -108,13 +108,13 @@ export default function MaestriaSabadoSchedulePage() {
   const loadMaestria = async (maestriaId: string) => {
     try {
       const { data, error } = await supabase
-        .from('maestria_sabado') // CORRECCIÓN: Nombre exacto de tu tabla en singular
+        .from('maestria_sabado') // CONFIGURACIÓN: Nombre de la tabla física en formato singular
         .select('id, name')
-        .eq('id', maestriaId) // Filtro directo usando el string del UUID
+        .eq('id', maestriaId) // Filtro directo mediante la cadena alfanumérica UUID
         .single();
 
       if (error) {
-        console.error('Error de Supabase en loadMaestria:', error);
+        console.error('Error de Supabase en consulta loadMaestria:', error);
         throw error;
       }
       
@@ -133,13 +133,13 @@ export default function MaestriaSabadoSchedulePage() {
   const loadSchedules = async (maestriaId: string) => {
     try {
       const { data, error } = await supabase
-        .from('maestria_sabado_schedule')
+        .from('maestria_sabado_schedule') // CONFIGURACIÓN: Nombre de la tabla física en formato singular
         .select('*')
-        .eq('maestria_id', maestriaId) // Filtro directo usando el string del UUID
+        .eq('maestria_id', maestriaId) // Filtro directo mediante la cadena alfanumérica UUID
         .order('start_time');
 
       if (error) {
-        console.error('Error de Supabase en loadSchedules:', error);
+        console.error('Error de Supabase en consulta loadSchedules:', error);
         throw error;
       }
       
@@ -263,7 +263,7 @@ export default function MaestriaSabadoSchedulePage() {
       }
 
       const scheduleData = {
-        maestria_id: id, // Guardamos el UUID nativo directamente
+        maestria_id: id, // Asignación del identificador UUID limpio
         subject_name: formData.subject_name.trim(),
         day_of_week: 6,
         start_time: formData.start_time + ':00',

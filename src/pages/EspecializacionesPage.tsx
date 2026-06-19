@@ -28,10 +28,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Plus, Edit, Trash2, Eye, Search, GraduationCap } from 'lucide-react';
+import { Plus, Edit, Trash2, Search, GraduationCap } from 'lucide-react';
 
 interface Especializacion {
-  id: string;
+  id: string; // CONFIGURACIÓN: string porque en tu base de datos real es un UUID
   name: string;
   created_at: string;
   updated_at: string;
@@ -53,12 +53,18 @@ export default function EspecializacionesPage() {
   const fetchEspecializaciones = async () => {
     try {
       setLoading(true);
+      
+      // CORRECCIÓN: Apuntar al nombre exacto de la tabla en tu base de datos
       const { data, error } = await supabase
-        .from('specializations')
+        .from('especializacion') 
         .select('*')
         .order('name');
 
-      if (error) throw error;
+      if (error) {
+        console.error('Error de Supabase al consultar especialidades:', error);
+        throw error;
+      }
+      
       setEspecializaciones(data || []);
     } catch (error) {
       console.error('Error fetching especializaciones:', error);
@@ -77,9 +83,9 @@ export default function EspecializacionesPage() {
 
     try {
       if (editingEspecializacion) {
-        // Actualizar especialización existente
+        // Actualizar especialización existente usando el UUID limpio
         const { error } = await supabase
-          .from('specializations')
+          .from('especializacion')
           .update({ name: formData.name.trim() })
           .eq('id', editingEspecializacion.id);
 
@@ -88,7 +94,7 @@ export default function EspecializacionesPage() {
       } else {
         // Crear nueva especialización
         const { error } = await supabase
-          .from('specializations')
+          .from('especializacion')
           .insert([{ name: formData.name.trim() }]);
 
         if (error) throw error;
@@ -120,7 +126,7 @@ export default function EspecializacionesPage() {
 
     try {
       const { error } = await supabase
-        .from('specializations')
+        .from('especializacion')
         .delete()
         .eq('id', deleteEspecializacion.id);
 
@@ -135,7 +141,7 @@ export default function EspecializacionesPage() {
   };
 
   const filteredEspecializaciones = especializaciones.filter((esp) =>
-    esp.name.toLowerCase().includes(searchTerm.toLowerCase())
+    esp.name?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   if (loading) {
@@ -226,7 +232,7 @@ export default function EspecializacionesPage() {
                       {especializacion.name}
                     </TableCell>
                     <TableCell>
-                      {new Date(especializacion.created_at).toLocaleDateString('es-MX')}
+                      {especializacion.created_at ? new Date(especializacion.created_at).toLocaleDateString('es-MX') : 'N/A'}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end space-x-2">
