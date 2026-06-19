@@ -58,11 +58,18 @@ export default function CalendarioAcademicoModal({
   const loadSchoolCycles = async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase
+      // Filtramos por cycle_type para que solo aparezcan los ciclos
+      // correspondientes al tipo de programa (LEIP o regular).
+      let query = supabase
         .from('school_cycles')
         .select('*')
-        .eq('is_active', true)
-        .order('start_date', { ascending: false });
+        .eq('is_active', true);
+
+      query = isLeipProgram
+        ? query.eq('cycle_type', 'LEIP')
+        : query.neq('cycle_type', 'LEIP');
+
+      const { data, error } = await query.order('start_date', { ascending: false });
 
       if (error) throw error;
       setSchoolCycles(data || []);
@@ -70,6 +77,8 @@ export default function CalendarioAcademicoModal({
       // Seleccionar automáticamente el primer ciclo activo
       if (data && data.length > 0) {
         setSelectedCycleId(data[0].id);
+      } else {
+        setSelectedCycleId('');
       }
     } catch (error: any) {
       console.error('Error loading school cycles:', error);
@@ -87,7 +96,10 @@ export default function CalendarioAcademicoModal({
 
     setGenerating(true);
     try {
-      await generateCalendarioAcademico(programId, selectedCycleId);
+      // FIX: antes no se enviaba isLeipProgram, por lo que la función
+      // siempre asumía un programa regular (tablas programs/subjects/schedule)
+      // en vez de las tablas LEIP correspondientes.
+      await generateCalendarioAcademico(programId, selectedCycleId, isLeipProgram);
       toast.success('Calendario académico generado exitosamente');
       onClose();
     } catch (error: any) {
@@ -101,12 +113,12 @@ export default function CalendarioAcademicoModal({
   const formatDateRange = (startDate: string, endDate: string): string => {
     const start = new Date(startDate);
     const end = new Date(endDate);
-    
+
     const months = [
       'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
       'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'
     ];
-    
+
     return `${months[start.getMonth()]} ${start.getFullYear()} - ${months[end.getMonth()]} ${end.getFullYear()}`;
   };
 
