@@ -15,7 +15,7 @@ const isOddSemesterGroup = (groupName: string): boolean => {
 const MAX_ROWS_SINGLE_PAGE = 6;
 
 // Y mínima para la firma cuando todo cabe en página 1
-const SIGNATURE_MIN_Y = 165;
+const SIGNATURE_MIN_Y = 160;
 // Límite inferior seguro antes del pie de página
 const FOOTER_SAFE_Y = 242;
 
@@ -113,10 +113,10 @@ const drawClosingAndSignature = (doc: jsPDF, y: number, forcedMinY = false) => {
   doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
   doc.text('ATENTAMENTE', 105, signatureY, { align: 'center' });
   doc.text('"EDUCAR PARA TRANSFORMAR"', 105, signatureY + 6, { align: 'center' });
-  doc.text('DR. JUAN IGNACIO HERNÁNDEZ VÁZQUEZ', 105, signatureY + 26, { align: 'center' });
+  doc.text('DR. JUAN IGNACIO HERNÁNDEZ VÁZQUEZ', 105, signatureY + 24, { align: 'center' });
   doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-  doc.text('DIRECTOR DE LA UNIDAD UPN 212 TEZIUTLÁN', 105, signatureY + 31, { align: 'center' });
-  doc.text('DE LA UNIVERSIDAD PEDAGÓGICA NACIONAL', 105, signatureY + 35, { align: 'center' });
+  doc.text('DIRECTOR DE LA UNIDAD UPN 212 TEZIUTLÁN', 105, signatureY + 29, { align: 'center' });
+  doc.text('DE LA UNIVERSIDAD PEDAGÓGICA NACIONAL', 105, signatureY + 33, { align: 'center' });
 };
 
 // ── Genera el PDF completo en el doc dado ─────────────────────────────────
