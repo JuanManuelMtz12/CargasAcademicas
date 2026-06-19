@@ -42,7 +42,7 @@ import { ArrowLeft, Plus, Edit, Trash2, Clock, CalendarCheck } from 'lucide-reac
 
 interface MaestriaSabado {
   id: number;
-  name: string; // Cambiado a 'name' según tu nueva estructura
+  name: string; // Segunda versión estructurada con 'name'
 }
 
 interface Schedule {
@@ -86,17 +86,17 @@ export default function MaestriaSabadoSchedulePage() {
   }, [id]);
 
   const loadData = async () => {
-    // CORRECCIÓN: Validar que el parámetro id exista y no sea la cadena "undefined"
+    // CORRECCIÓN SEGURA: Validar que el id de la URL exista y sea válido antes de enviar consultas vacías
     if (!id || id === 'undefined') {
-      console.error('Error: El parámetro ID de la URL no está definido.');
-      toast.error('No se pudo identificar la maestría');
+      console.error('Error crítico: El parámetro "id" dinámico no fue detectado en la URL.');
+      toast.error('No se pudo identificar la maestría seleccionada');
       setLoading(false);
       return;
     }
 
     setLoading(true);
     try {
-      // Pasamos el id validado a ambas funciones
+      // Pasamos el id validado directamente a los submétodos de carga
       await Promise.all([loadMaestria(id), loadSchedules(id)]);
     } catch (error) {
       console.error('Error loading data:', error);
@@ -106,23 +106,23 @@ export default function MaestriaSabadoSchedulePage() {
     }
   };
 
-  // CORRECCIÓN: Recibe el id como argumento y lo parsea de forma segura a entero
+  // CORRECCIÓN: Parseo explícito a entero de base 10 para garantizar compatibilidad con columnas numéricas
   const loadMaestria = async (maestriaId: string) => {
     try {
       const parsedId = parseInt(maestriaId, 10);
-      if (isNaN(parsedId)) throw new Error('El ID de la maestría no es un número válido');
+      if (isNaN(parsedId)) throw new Error('ID de maestría no válido.');
 
       const { data, error } = await supabase
         .from('maestrias_sabado')
-        .select('id, name')
+        .select('id, name') // Selección de la columna 'name'
         .eq('id', parsedId)
         .single();
 
       if (error) {
-        console.error('Error en consulta de maestría:', error);
+        console.error('Detalle de error en loadMaestria:', error);
         throw error;
       }
-      
+
       if (!data) {
         toast.error('Maestría no encontrada');
         navigate('/maestrias-sabado');
@@ -135,11 +135,11 @@ export default function MaestriaSabadoSchedulePage() {
     }
   };
 
-  // CORRECCIÓN: Recibe el id como argumento y lo parsea de forma segura a entero
+  // CORRECCIÓN: Parseo estricto a entero
   const loadSchedules = async (maestriaId: string) => {
     try {
       const parsedId = parseInt(maestriaId, 10);
-      if (isNaN(parsedId)) throw new Error('El ID de la maestría no es un número válido');
+      if (isNaN(parsedId)) throw new Error('ID de maestría no válido.');
 
       const { data, error } = await supabase
         .from('maestria_sabado_schedule')
@@ -148,10 +148,10 @@ export default function MaestriaSabadoSchedulePage() {
         .order('start_time');
 
       if (error) {
-        console.error('Error en consulta de horarios:', error);
+        console.error('Detalle de error en loadSchedules:', error);
         throw error;
       }
-      
+
       setSchedules(data || []);
     } catch (error) {
       throw error;
@@ -227,7 +227,6 @@ export default function MaestriaSabadoSchedulePage() {
       }
 
       const { data, error } = await query;
-
       if (error) throw error;
 
       const hasConflict = (data || []).some((schedule: Schedule) => {
@@ -345,19 +344,13 @@ export default function MaestriaSabadoSchedulePage() {
     );
   }
 
-  if (!maestria) {
-    return null;
-  }
+  if (!maestria) return null;
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <Button
-            variant="ghost"
-            onClick={() => navigate('/maestrias-sabado')}
-            className="mb-2 gap-2"
-          >
+          <Button variant="ghost" onClick={() => navigate('/maestrias-sabado')} className="mb-2 gap-2">
             <ArrowLeft className="w-4 h-4" />
             Volver a Maestrías Sabatinas
           </Button>
@@ -424,21 +417,11 @@ export default function MaestriaSabadoSchedulePage() {
                       <TableCell>{schedule.end_time.substring(0, 5)}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => openEditModal(schedule)}
-                            className="gap-1"
-                          >
+                          <Button variant="outline" size="sm" onClick={() => openEditModal(schedule)} className="gap-1">
                             <Edit className="w-4 h-4" />
                             Editar
                           </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => openDeleteDialog(schedule)}
-                            className="gap-1 text-red-600 hover:text-red-700 hover:bg-red-50"
-                          >
+                          <Button variant="outline" size="sm" onClick={() => openDeleteDialog(schedule)} className="gap-1 text-red-600 hover:text-red-700 hover:bg-red-50">
                             <Trash2 className="w-4 h-4" />
                             Eliminar
                           </Button>
@@ -457,95 +440,35 @@ export default function MaestriaSabadoSchedulePage() {
         <DialogContent className="sm:max-w-[500px]">
           <form onSubmit={handleSubmit}>
             <DialogHeader>
-              <DialogTitle>
-                {editingSchedule ? 'Editar Horario' : 'Nuevo Horario'}
-              </DialogTitle>
+              <DialogTitle>{editingSchedule ? 'Editar Horario' : 'Nuevo Horario'}</DialogTitle>
               <DialogDescription>
-                {editingSchedule
-                  ? 'Modifica los datos del horario'
-                  : 'Completa los datos para crear un nuevo horario sabatino'}
+                {editingSchedule ? 'Modifica los datos del horario' : 'Completa los datos para crear un nuevo horario sabatino'}
               </DialogDescription>
             </DialogHeader>
 
             <div className="grid gap-4 py-4">
               <div className="grid gap-2">
-                <Label htmlFor="subject_name">
-                  Nombre de la Materia <span className="text-red-500">*</span>
-                </Label>
-                <Input
-                  id="subject_name"
-                  value={formData.subject_name}
-                  onChange={(e) =>
-                    setFormData({ ...formData, subject_name: e.target.value })
-                  }
-                  placeholder="Ej: Metodología de la Investigación"
-                  className={errors.subject_name ? 'border-red-500' : ''}
-                />
-                {errors.subject_name && (
-                  <p className="text-sm text-red-500">{errors.subject_name}</p>
-                )}
+                <Label htmlFor="subject_name">Nombre de la Materia <span className="text-red-500">*</span></Label>
+                <Input id="subject_name" value={formData.subject_name} onChange={(e) => setFormData({ ...formData, subject_name: e.target.value })} placeholder="Ej: Metodología de la Investigación" className={errors.subject_name ? 'border-red-500' : ''} />
+                {errors.subject_name && <p className="text-sm text-red-500">{errors.subject_name}</p>}
               </div>
 
               <div className="grid gap-2">
-                <Label htmlFor="start_time">
-                  Hora de Inicio <span className="text-red-500">*</span>
-                </Label>
-                <Input
-                  id="start_time"
-                  type="time"
-                  value={formData.start_time}
-                  onChange={(e) =>
-                    setFormData({ ...formData, start_time: e.target.value })
-                  }
-                  className={errors.start_time ? 'border-red-500' : ''}
-                />
-                {errors.start_time && (
-                  <p className="text-sm text-red-500">{errors.start_time}</p>
-                )}
+                <Label htmlFor="start_time">Hora de Inicio <span className="text-red-500">*</span></Label>
+                <Input id="start_time" type="time" value={formData.start_time} onChange={(e) => setFormData({ ...formData, start_time: e.target.value })} className={errors.start_time ? 'border-red-500' : ''} />
+                {errors.start_time && <p className="text-sm text-red-500">{errors.start_time}</p>}
               </div>
 
               <div className="grid gap-2">
-                <Label htmlFor="end_time">
-                  Hora de Fin <span className="text-red-500">*</span>
-                </Label>
-                <Input
-                  id="end_time"
-                  type="time"
-                  value={formData.end_time}
-                  onChange={(e) =>
-                    setFormData({ ...formData, end_time: e.target.value })
-                  }
-                  className={errors.end_time ? 'border-red-500' : ''}
-                />
-                {errors.end_time && (
-                  <p className="text-sm text-red-500">{errors.end_time}</p>
-                )}
-              </div>
-
-              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
-                <p className="text-sm text-blue-800 dark:text-blue-300">
-                  <Clock className="w-4 h-4 inline mr-1" />
-                  El horario se asignará automáticamente para los días sábado
-                </p>
+                <Label htmlFor="end_time">Hora de Fin <span className="text-red-500">*</span></Label>
+                <Input id="end_time" type="time" value={formData.end_time} onChange={(e) => setFormData({ ...formData, end_time: e.target.value })} className={errors.end_time ? 'border-red-500' : ''} />
+                {errors.end_time && <p className="text-sm text-red-500">{errors.end_time}</p>}
               </div>
             </div>
 
             <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={closeModal}
-                disabled={submitting}
-              >
-                Cancelar
-              </Button>
-              <Button type="submit" disabled={submitting}>
-                {submitting
-                  ? 'Guardando...'
-                  : editingSchedule
-                  ? 'Actualizar'
-                  : 'Crear Horario'}
-              </Button>
+              <Button type="button" variant="outline" onClick={closeModal} disabled={submitting}>Cancelar</Button>
+              <Button type="submit" disabled={submitting}>{submitting ? 'Guardando...' : editingSchedule ? 'Actualizar' : 'Crear Horario'}</Button>
             </DialogFooter>
           </form>
         </DialogContent>
@@ -556,18 +479,12 @@ export default function MaestriaSabadoSchedulePage() {
           <AlertDialogHeader>
             <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
             <AlertDialogDescription>
-              Esta acción no se puede deshacer. Se eliminará permanentemente el
-              horario de <strong>{deletingSchedule?.subject_name}</strong>.
+              Esta acción no se puede deshacer. Se eliminará permanentemente el horario de <strong>{deletingSchedule?.subject_name}</strong>.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDelete}
-              className="bg-red-600 hover:bg-red-700"
-            >
-              Eliminar
-            </AlertDialogAction>
+            <AlertDialogAction onClick={handleDelete} className="bg-red-600 hover:bg-red-700">Eliminar</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
