@@ -107,8 +107,8 @@ const drawClosingAndSignature = (doc: jsPDF, y: number, forcedMinY = false) => {
   doc.text(split, 25, y, { align: 'justify', maxWidth: 165 });
   y += split.length * 6 + 8;
 
-  // En página 1 respetar mínimo para que la firma no suba demasiado
-  const signatureY = forcedMinY ? Math.max(y, SIGNATURE_MIN_Y) : y;
+  // En página 1 usar posición fija absoluta para la firma
+  const signatureY = forcedMinY ? SIGNATURE_MIN_Y : y;
 
   doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
   doc.text('ATENTAMENTE', 105, signatureY, { align: 'center' });
