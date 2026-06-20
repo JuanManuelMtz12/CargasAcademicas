@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { usePermissions } from '@/hooks/usePermissions';
-import { Database } from '@/types/database';
 import { toast } from 'sonner';
 import { Search, Plus, Pencil, Trash2, X } from 'lucide-react';
 import {
@@ -15,7 +14,17 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
-type Group = Database['public']['Tables']['groups']['Row'];
+// Definimos el tipo explícitamente en vez de usar Database['public']['Tables']['groups']['Row']
+// porque ese tipo autogenerado puede no estar actualizado tras una migración reciente
+// (le faltarían sede_id / leip_program_id hasta que se regenere).
+interface Group {
+  id: string;
+  name: string;
+  sede_id: string | null;
+  leip_program_id: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
 
 interface GroupWithRelations extends Group {
   sede?: { id: string; name: string } | null;
@@ -143,7 +152,7 @@ export default function GruposPage() {
       setFormData({
         name: group.name,
         sede_id: group.sede_id || '',
-        leip_program_id: (group as any).leip_program_id || '',
+        leip_program_id: group.leip_program_id || '',
       });
     } else {
       setEditingGroup(null);
