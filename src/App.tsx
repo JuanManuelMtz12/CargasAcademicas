@@ -15,6 +15,7 @@ import MaestrosExcedidosPage from '@/pages/maestros-excedidos/MaestrosExcedidosP
 import MateriasPage from '@/pages/materias/MateriasPage';
 import ModulosPage from '@/pages/modulos/ModulosPage';
 import GruposPage from '@/pages/grupos/GruposPage';
+import GruposLeipPage from '@/pages/grupos/GruposLeipPage'; // 1. IMPORTAMOS LA NUEVA PÁGINA
 import DisponibilidadPage from '@/pages/disponibilidad/DisponibilidadPage';
 import UsuariosPageV2 from '@/pages/usuarios/UsuariosPageV2';
 import MaestrosMultiplesPage from '@/pages/maestros-multiples/MaestrosMultiplesPage';
@@ -68,12 +69,15 @@ function App() {
             <Route path="programas" element={<ProgramasPage />} />
             <Route path="programas/:programId/horarios" element={<ProgramaHorariosPage />} />
             
-            <Route path="programas-leip" element={<ProtectedRoute requireModule="programas-leip"><ProgramasLeipPage /></ProtectedRoute>} />
-            <Route path="materias-leip" element={<ProtectedRoute requireModule="materias-leip"><MateriasLeipPage /></ProtectedRoute>} />
-              <Route path="programas-leip/:programId/horarios" element={<ProtectedRoute requireModule="programas-leip"><LeipHorariosPage /></ProtectedRoute>} />
+            {/* RUTAS DEL MÓDULO LEIP */}
+            {/* RUTAS DEL MÓDULO LEIP */}
+              <Route path="programas-leip" element={<ProtectedRoute requireModule="programas-leip"><ProgramasLeipPage /></ProtectedRoute>} />
+              <Route path="materias-leip" element={<ProtectedRoute requireModule="materias-leip"><MateriasLeipPage /></ProtectedRoute>} />
+              <Route path="grupos-leip" element={<ProtectedRoute requireModule="grupos-leip"><GruposLeipPage /></ProtectedRoute>} /> 
+            <Route path="programas-leip/:programId/horarios" element={<ProtectedRoute requireModule="programas-leip"><LeipHorariosPage /></ProtectedRoute>} />
+            
             <Route path="maestrias-sabado" element={<ProtectedRoute requireModule="maestrias-sabado"><MaestriasSabatinasPage /></ProtectedRoute>} />
             <Route path="maestrias-sabado/:id/horarios" element={<ProtectedRoute requireModule="maestrias-sabado"><MaestriaSabadoSchedulePage /></ProtectedRoute>} />
-<Route path="programas-leip/:programId/horarios" element={<ProtectedRoute requireModule="programas-leip"><LeipHorariosPage /></ProtectedRoute>} />
             <Route path="cargas-academicas" element={<ProtectedRoute requireModule="cargas-academicas"><CargasAcademicasPage /></ProtectedRoute>} />
             <Route path="especializaciones" element={<ProtectedRoute requireModule="especializaciones"><EspecializacionesPage /></ProtectedRoute>} />
             
