@@ -56,6 +56,7 @@ const menuGroups: MenuGroup[] = [
     items: [
       { icon: FolderOpen, label: 'Programas LEIP', path: '/programas-leip', moduleId: 'programas-leip' },
       { icon: BookOpen, label: 'Materias LEIP', path: '/materias-leip', moduleId: 'materias-leip' },
+      { icon: Building, label: 'Grupos LEIP', path: '/grupos-leip', moduleId: 'grupos-leip' },
     ],
   },
   {
@@ -179,7 +180,7 @@ export default function MainLayout() {
                               <item.icon className="w-5 h-5 group-hover:scale-110 transition-transform duration-200 shrink-0" />
                               <span className="text-sm font-medium">{item.label}</span>
                             </Link>
-                          </li>
+                          </td>
                         ))}
                       </ul>
                     )}
