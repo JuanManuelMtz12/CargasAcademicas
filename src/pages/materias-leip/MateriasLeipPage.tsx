@@ -52,6 +52,8 @@ interface LeipSubject {
   name: string;
   module_name: string | null;
   leip_module_id: string | null;
+  start_date: string | null;
+  end_date: string | null;
   created_at?: string;
 }
 
@@ -71,6 +73,8 @@ interface FormData {
   leip_program_id: string;
   name: string;
   module_name: string;
+  start_date: string;
+  end_date: string;
 }
 
 const ITEMS_PER_PAGE = 10;
@@ -94,6 +98,8 @@ export default function MateriasLeipPage() {
     leip_program_id: '',
     name: '',
     module_name: '',
+    start_date: '',
+    end_date: '',
   });
 
   const [errors, setErrors] = useState<Partial<Record<keyof FormData, string>>>({});
@@ -180,6 +186,8 @@ export default function MateriasLeipPage() {
       leip_program_id: '',
       name: '',
       module_name: '',
+      start_date: '',
+      end_date: '',
     });
     setErrors({});
     setIsModalOpen(true);
@@ -191,6 +199,8 @@ export default function MateriasLeipPage() {
       leip_program_id: subject.leip_program_id,
       name: subject.name,
       module_name: subject.module_name || '',
+      start_date: subject.start_date || '',
+      end_date: subject.end_date || '',
     });
     setErrors({});
     setIsModalOpen(true);
@@ -203,6 +213,8 @@ export default function MateriasLeipPage() {
       leip_program_id: '',
       name: '',
       module_name: '',
+      start_date: '',
+      end_date: '',
     });
     setErrors({});
   };
@@ -216,6 +228,10 @@ export default function MateriasLeipPage() {
 
     if (!formData.name.trim()) {
       newErrors.name = 'El nombre es requerido';
+    }
+
+    if (formData.start_date && formData.end_date && formData.start_date > formData.end_date) {
+      newErrors.end_date = 'La fecha de término debe ser posterior al inicio';
     }
 
     setErrors(newErrors);
@@ -239,6 +255,8 @@ export default function MateriasLeipPage() {
         name: formData.name.trim(),
         leip_module_id: null,
         module_name: formData.module_name.trim() || null,
+        start_date: formData.start_date || null,
+        end_date: formData.end_date || null,
       };
 
       if (editingSubject) {
@@ -307,6 +325,12 @@ export default function MateriasLeipPage() {
       console.error('Error deleting subject:', error);
       toast.error(error.message || 'Error al eliminar el módulo');
     }
+  };
+
+  const formatDateDisplay = (dateStr: string | null): string => {
+    if (!dateStr) return '-';
+    const d = new Date(dateStr + 'T00:00:00');
+    return d.toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' });
   };
 
   if (loading) {
@@ -383,13 +407,15 @@ export default function MateriasLeipPage() {
                   <TableHead>Nombre</TableHead>
                   <TableHead>Módulo</TableHead>
                   <TableHead>Programa</TableHead>
+                  <TableHead>Inicio</TableHead>
+                  <TableHead>Término</TableHead>
                   <TableHead className="text-right">Acciones</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {paginatedSubjects.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={4} className="text-center text-gray-500 py-8">
+                    <TableCell colSpan={6} className="text-center text-gray-500 py-8">
                       <div className="flex flex-col items-center gap-2">
                         <BookOpen className="w-12 h-12 text-gray-400" />
                         <p>
@@ -419,6 +445,12 @@ export default function MateriasLeipPage() {
                         ) : (
                           <span className="text-gray-400">-</span>
                         )}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {formatDateDisplay(subject.start_date)}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {formatDateDisplay(subject.end_date)}
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
@@ -568,6 +600,42 @@ export default function MateriasLeipPage() {
                 {errors.name && (
                   <p className="text-sm text-red-500">{errors.name}</p>
                 )}
+              </div>
+
+              {/* Fechas de inicio y término */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="start_date">
+                    Inicio de módulo{' '}
+                    <span className="text-gray-400 text-xs font-normal">(opcional)</span>
+                  </Label>
+                  <Input
+                    id="start_date"
+                    type="date"
+                    value={formData.start_date}
+                    onChange={(e) =>
+                      setFormData({ ...formData, start_date: e.target.value })
+                    }
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="end_date">
+                    Término de módulo{' '}
+                    <span className="text-gray-400 text-xs font-normal">(opcional)</span>
+                  </Label>
+                  <Input
+                    id="end_date"
+                    type="date"
+                    value={formData.end_date}
+                    onChange={(e) =>
+                      setFormData({ ...formData, end_date: e.target.value })
+                    }
+                    className={errors.end_date ? 'border-red-500' : ''}
+                  />
+                  {errors.end_date && (
+                    <p className="text-sm text-red-500">{errors.end_date}</p>
+                  )}
+                </div>
               </div>
             </div>
 
