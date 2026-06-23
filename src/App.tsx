@@ -71,6 +71,7 @@ function App() {
             
             {/* RUTAS DEL MÓDULO LEIP */}
             {/* RUTAS DEL MÓDULO LEIP */}
+            <Route path="/grupos-leip" element={<GruposLeipPage />} />
               <Route path="programas-leip" element={<ProtectedRoute requireModule="programas-leip"><ProgramasLeipPage /></ProtectedRoute>} />
               <Route path="materias-leip" element={<ProtectedRoute requireModule="materias-leip"><MateriasLeipPage /></ProtectedRoute>} />
               <Route path="grupos-leip" element={<ProtectedRoute requireModule="grupos-leip"><GruposLeipPage /></ProtectedRoute>} /> 

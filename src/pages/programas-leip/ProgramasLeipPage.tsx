@@ -95,7 +95,7 @@ export default function ProgramasLeipPage() {
   const [managingProgram, setManagingProgram] = useState<LeipProgramWithRelations | null>(null);
   const [isCalendarioModalOpen, setIsCalendarioModalOpen] = useState(false);
   const [calendarioProgram, setCalendarioProgram] = useState<LeipProgramWithRelations | null>(null);
-  
+
   const [formData, setFormData] = useState<FormData>({
     name: '',
     coordinator_id: '',
@@ -329,6 +329,18 @@ export default function ProgramasLeipPage() {
         return;
       }
 
+      // Verificar si hay grupos asignados al programa
+      const { count: gruposCount } = await supabase
+        .from('groups')
+        .select('*', { count: 'exact', head: true })
+        .eq('leip_program_id', deletingProgram.id);
+
+      if (gruposCount && gruposCount > 0) {
+        toast.error('No se puede eliminar el programa porque tiene grupos asignados');
+        closeDeleteDialog();
+        return;
+      }
+
       const { error } = await supabase
         .from('leip_programs')
         .delete()
@@ -452,6 +464,17 @@ export default function ProgramasLeipPage() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
+                          <Link to={`/grupos-leip?programId=${program.id}`}>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="gap-1 text-purple-600 hover:text-purple-700 hover:bg-purple-50"
+                              title="Ver/editar grupos de este programa"
+                            >
+                              <Users className="w-4 h-4" />
+                              Grupos
+                            </Button>
+                          </Link>
                           <Button
                             variant="outline"
                             size="sm"
@@ -472,11 +495,11 @@ export default function ProgramasLeipPage() {
                             Editar
                           </Button>
                           <Link to={`/programas-leip/${program.id}/horarios`}>
-  <Button variant="outline" size="sm" className="gap-1">
-    <Clock className="w-4 h-4" />
-    Horarios
-  </Button>
-</Link>
+                            <Button variant="outline" size="sm" className="gap-1">
+                              <Clock className="w-4 h-4" />
+                              Horarios
+                            </Button>
+                          </Link>
                           <Button
                             variant="outline"
                             size="sm"

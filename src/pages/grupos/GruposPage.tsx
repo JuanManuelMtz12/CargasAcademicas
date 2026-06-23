@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { usePermissions } from '@/hooks/usePermissions';
+import { Database } from '@/types/database';
 import { toast } from 'sonner';
 import { Search, Plus, Pencil, Trash2, X } from 'lucide-react';
 import {
@@ -14,60 +15,29 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
-// Definimos el tipo explícitamente en vez de usar Database['public']['Tables']['groups']['Row']
-// porque ese tipo autogenerado puede no estar actualizado tras una migración reciente
-// (le faltarían sede_id / leip_program_id hasta que se regenere).
-interface Group {
-  id: string;
-  name: string;
-  sede_id: string | null;
-  leip_program_id: string | null;
-  created_at?: string;
-  updated_at?: string;
-}
-
-interface GroupWithRelations extends Group {
-  sede?: { id: string; name: string } | null;
-  leip_program?: { id: string; name: string } | null;
-}
-
-interface Sede {
-  id: string;
-  name: string;
-}
-
-interface LeipProgram {
-  id: string;
-  name: string;
-}
+type Group = Database['public']['Tables']['groups']['Row'];
 
 export default function GruposPage() {
   const { isAdmin } = usePermissions();
-  const [groups, setGroups] = useState<GroupWithRelations[]>([]);
-  const [sedes, setSedes] = useState<Sede[]>([]);
-  const [leipPrograms, setLeipPrograms] = useState<LeipProgram[]>([]);
+  const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingGroup, setEditingGroup] = useState<GroupWithRelations | null>(null);
+  const [editingGroup, setEditingGroup] = useState<Group | null>(null);
   const [formData, setFormData] = useState({
     name: '',
-    sede_id: '',
-    leip_program_id: '',
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Estado para el diálogo de confirmación de eliminación
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [groupToDelete, setGroupToDelete] = useState<GroupWithRelations | null>(null);
+  const [groupToDelete, setGroupToDelete] = useState<Group | null>(null);
 
   const itemsPerPage = 5;
 
   useEffect(() => {
     loadGroups();
-    loadSedes();
-    loadLeipPrograms();
   }, []);
 
   const loadGroups = async () => {
@@ -76,36 +46,27 @@ export default function GruposPage() {
 
       const { data, error } = await supabase
         .from('groups')
-        .select(`
-          *,
-          sede:sede_id (id, name),
-          leip_program:leip_program_id (id, name)
-        `);
+        .select('*');
 
       if (error) throw error;
-      
+
       // Ordenamiento personalizado: primero por número, luego por letra
       const sortedData = (data || []).sort((a, b) => {
-        // Extraer número y letra del nombre del grupo usando regex
         const matchA = a.name.match(/^(\d+)([A-Za-z]*)$/);
         const matchB = b.name.match(/^(\d+)([A-Za-z]*)$/);
 
-        // Si ambos tienen el formato número+letra
         if (matchA && matchB) {
           const numA = parseInt(matchA[1], 10);
           const numB = parseInt(matchB[1], 10);
           const letterA = matchA[2] || '';
           const letterB = matchB[2] || '';
 
-          // Primero comparar por número
           if (numA !== numB) {
             return numA - numB;
           }
-          // Si los números son iguales, comparar por letra alfabéticamente
           return letterA.localeCompare(letterB);
         }
 
-        // Si alguno no coincide con el formato, usar orden alfabético normal
         return a.name.localeCompare(b.name);
       });
 
@@ -118,48 +79,16 @@ export default function GruposPage() {
     }
   };
 
-  const loadSedes = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('sedes')
-        .select('id, name')
-        .order('name');
-
-      if (error) throw error;
-      setSedes(data || []);
-    } catch (error: any) {
-      console.error('Error loading sedes:', error);
-    }
-  };
-
-  const loadLeipPrograms = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('leip_programs')
-        .select('id, name')
-        .order('name');
-
-      if (error) throw error;
-      setLeipPrograms(data || []);
-    } catch (error: any) {
-      console.error('Error loading leip programs:', error);
-    }
-  };
-
-  const handleOpenModal = (group?: GroupWithRelations) => {
+  const handleOpenModal = (group?: Group) => {
     if (group) {
       setEditingGroup(group);
       setFormData({
         name: group.name,
-        sede_id: group.sede_id || '',
-        leip_program_id: group.leip_program_id || '',
       });
     } else {
       setEditingGroup(null);
       setFormData({
         name: '',
-        sede_id: '',
-        leip_program_id: '',
       });
     }
     setIsModalOpen(true);
@@ -170,14 +99,12 @@ export default function GruposPage() {
     setEditingGroup(null);
     setFormData({
       name: '',
-      sede_id: '',
-      leip_program_id: '',
     });
   };
 
   const validateUniqueName = async (name: string): Promise<boolean> => {
     const trimmedName = name.trim();
-    
+
     try {
       const { data, error } = await supabase
         .from('groups')
@@ -186,7 +113,6 @@ export default function GruposPage() {
 
       if (error) throw error;
 
-      // Si estamos editando, excluir el grupo actual
       if (editingGroup) {
         const duplicates = data?.filter(g => g.id !== editingGroup.id) || [];
         return duplicates.length === 0;
@@ -210,7 +136,6 @@ export default function GruposPage() {
     try {
       setIsSubmitting(true);
 
-      // Validar nombre único
       const isUnique = await validateUniqueName(formData.name);
       if (!isUnique) {
         toast.error('Ya existe un grupo con este nombre');
@@ -218,26 +143,22 @@ export default function GruposPage() {
         return;
       }
 
-      const groupData = {
-        name: formData.name.trim(),
-        sede_id: formData.sede_id || null,
-        leip_program_id: formData.leip_program_id || null,
-      };
-
       if (editingGroup) {
-        // Actualizar
         const { error } = await supabase
           .from('groups')
-          .update(groupData)
+          .update({
+            name: formData.name.trim(),
+          })
           .eq('id', editingGroup.id);
 
         if (error) throw error;
         toast.success('Grupo actualizado correctamente');
       } else {
-        // Crear
         const { error } = await supabase
           .from('groups')
-          .insert(groupData);
+          .insert({
+            name: formData.name.trim(),
+          });
 
         if (error) throw error;
         toast.success('Grupo creado correctamente');
@@ -253,7 +174,7 @@ export default function GruposPage() {
     }
   };
 
-  const handleDelete = async (group: GroupWithRelations) => {
+  const handleDelete = async (group: Group) => {
     setGroupToDelete(group);
     setDeleteDialogOpen(true);
   };
@@ -262,7 +183,6 @@ export default function GruposPage() {
     if (!groupToDelete) return;
 
     try {
-      // Validar que no tenga horarios asignados (regulares)
       const { data: scheduleData, error: scheduleError } = await supabase
         .from('schedule')
         .select('id')
@@ -278,23 +198,6 @@ export default function GruposPage() {
         return;
       }
 
-      // Validar que no tenga horarios LEIP asignados
-      const { data: leipScheduleData, error: leipScheduleError } = await supabase
-        .from('leip_schedule')
-        .select('id')
-        .eq('group_id', groupToDelete.id)
-        .limit(1);
-
-      if (leipScheduleError) throw leipScheduleError;
-
-      if (leipScheduleData && leipScheduleData.length > 0) {
-        toast.error('No se puede eliminar: el grupo tiene horarios LEIP asignados');
-        setDeleteDialogOpen(false);
-        setGroupToDelete(null);
-        return;
-      }
-
-      // Eliminar
       const { error } = await supabase
         .from('groups')
         .delete()
@@ -313,18 +216,15 @@ export default function GruposPage() {
     }
   };
 
-  // Filtrar grupos por búsqueda
   const filteredGroups = groups.filter((group) =>
     group.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  // Paginación
   const totalPages = Math.ceil(filteredGroups.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
   const currentGroups = filteredGroups.slice(startIndex, endIndex);
 
-  // Resetear a página 1 cuando cambia la búsqueda
   useEffect(() => {
     setCurrentPage(1);
   }, [searchTerm]);
@@ -382,12 +282,6 @@ export default function GruposPage() {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-slate-400 uppercase tracking-wider">
                   Nombre
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-slate-400 uppercase tracking-wider">
-                  Sede
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-slate-400 uppercase tracking-wider">
-                  Programa LEIP
-                </th>
                 {isAdmin && (
                   <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-slate-400 uppercase tracking-wider">
                     Acciones
@@ -398,7 +292,7 @@ export default function GruposPage() {
             <tbody className="bg-white dark:bg-slate-800 divide-y divide-gray-200 dark:divide-slate-700">
               {currentGroups.length === 0 ? (
                 <tr>
-                  <td colSpan={isAdmin ? 4 : 3} className="px-6 py-8 text-center text-gray-500 dark:text-slate-400">
+                  <td colSpan={isAdmin ? 2 : 1} className="px-6 py-8 text-center text-gray-500 dark:text-slate-400">
                     {searchTerm ? 'No se encontraron grupos' : 'No hay grupos registrados'}
                   </td>
                 </tr>
@@ -407,16 +301,6 @@ export default function GruposPage() {
                   <tr key={group.id} className="hover:bg-gray-50 dark:hover:bg-slate-700/50">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-900 dark:text-slate-100">{group.name}</div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-700 dark:text-slate-300">
-                        {group.sede?.name || <span className="text-gray-400">-</span>}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-700 dark:text-slate-300">
-                        {group.leip_program?.name || <span className="text-gray-400">-</span>}
-                      </div>
                     </td>
                     {isAdmin && (
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
@@ -493,7 +377,6 @@ export default function GruposPage() {
       {isModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white dark:bg-slate-800 rounded-lg shadow-xl max-w-md w-full">
-            {/* Modal Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-700">
               <h2 className="text-xl font-semibold text-gray-900 dark:text-slate-100">
                 {editingGroup ? 'Editar Grupo' : 'Nuevo Grupo'}
@@ -506,10 +389,8 @@ export default function GruposPage() {
               </button>
             </div>
 
-            {/* Modal Body */}
             <form onSubmit={handleSubmit}>
               <div className="px-6 py-4 space-y-4">
-                {/* Nombre */}
                 <div>
                   <label htmlFor="name" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">
                     Nombre <span className="text-red-500">*</span>
@@ -527,52 +408,8 @@ export default function GruposPage() {
                     El nombre del grupo debe ser único en el sistema
                   </p>
                 </div>
-
-                {/* Sede */}
-                <div>
-                  <label htmlFor="sede_id" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">
-                    Sede <span className="text-gray-400 text-xs font-normal">(opcional)</span>
-                  </label>
-                  <select
-                    id="sede_id"
-                    value={formData.sede_id}
-                    onChange={(e) => setFormData({ ...formData, sede_id: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100"
-                  >
-                    <option value="">Sin sede</option>
-                    {sedes.map((sede) => (
-                      <option key={sede.id} value={sede.id}>
-                        {sede.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Programa LEIP */}
-                <div>
-                  <label htmlFor="leip_program_id" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">
-                    Programa LEIP <span className="text-gray-400 text-xs font-normal">(opcional)</span>
-                  </label>
-                  <select
-                    id="leip_program_id"
-                    value={formData.leip_program_id}
-                    onChange={(e) => setFormData({ ...formData, leip_program_id: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100"
-                  >
-                    <option value="">Ninguno (grupo regular)</option>
-                    {leipPrograms.map((program) => (
-                      <option key={program.id} value={program.id}>
-                        {program.name}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">
-                    Asigna este grupo a un programa LEIP para que aparezca en el reporte de cargas académicas
-                  </p>
-                </div>
               </div>
 
-              {/* Modal Footer */}
               <div className="px-6 py-4 border-t border-gray-200 dark:border-slate-700 flex justify-end gap-3">
                 <button
                   type="button"
