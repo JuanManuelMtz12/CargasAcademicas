@@ -51,6 +51,13 @@ interface ScheduleRow {
   semestre: string;
 }
 
+interface LeipScheduleRow {
+  modulo: string;
+  asignatura: string;
+  horario: string;
+  grupo: string;
+}
+
 const loadImageAsBase64 = async (url: string): Promise<string> => {
   const response = await fetch(url);
   const blob = await response.blob();
@@ -118,6 +125,10 @@ const drawClosingAndSignature = (doc: jsPDF, y: number, forcedMinY = false) => {
   doc.text('DIRECTOR DE LA UNIDAD UPN 212 TEZIUTLÁN', 105, signatureY + 29, { align: 'center' });
   doc.text('DE LA UNIVERSIDAD PEDAGÓGICA NACIONAL', 105, signatureY + 33, { align: 'center' });
 };
+
+// ════════════════════════════════════════════════════════════════════════════
+// PROGRAMAS REGULARES (escolarizados)
+// ════════════════════════════════════════════════════════════════════════════
 
 // ── Genera el PDF completo en el doc dado ─────────────────────────────────
 const buildOficioPdf = async (
@@ -403,6 +414,300 @@ export const downloadAllOficiosForAllTeachers = async (programId?: string): Prom
     const link = document.createElement('a');
     link.href = URL.createObjectURL(zipBlob);
     link.download = `Oficios_Todos_Maestros_${new Date().toISOString().split('T')[0]}.zip`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  } catch (error: any) {
+    console.error('Error:', error);
+    throw error;
+  }
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// PROGRAMAS LEIP (sabatinos / modulares)
+// ════════════════════════════════════════════════════════════════════════════
+// Diferencias clave respecto al oficio regular:
+//   • NO se filtra por semestre "non" — se incluyen TODOS los grupos/módulos
+//     asignados al maestro en el ciclo activo de tipo LEIP.
+//   • La tabla usa columnas MÓDULO / ASIGNATURA / HORARIO Y DÍA / GRUPO
+//     en vez de CLAVE / ASIGNATURA / HORARIO Y DÍA / SEM, ya que leip_subjects
+//     no tiene "clave" y el concepto de "semestre" no aplica en LEIP.
+//   • El nombre de la licenciatura se toma directamente de leip_programs.name
+//     (ya viene completo, no se le antepone "LICENCIATURA EN").
+
+const buildOficioLeipPdf = async (
+  doc: jsPDF,
+  teacherName: string,
+  personalType: string,
+  licenciaturaName: string,
+  periodoText: string,
+  tableRows: LeipScheduleRow[],
+  bgImage: string | null
+) => {
+  if (bgImage) {
+    try { addBackgroundImage(doc, bgImage); } catch { /* noop */ }
+  }
+
+  const dateStr = formatDateToSpanish(new Date());
+  const singlePage = tableRows.length <= MAX_ROWS_SINGLE_PAGE;
+
+  let yPos = drawHeader(doc, teacherName, personalType, dateStr);
+  yPos = drawIntroText(doc, yPos, licenciaturaName, periodoText);
+
+  autoTable(doc, {
+    startY: yPos,
+    head: [['MÓDULO', 'ASIGNATURA', 'HORARIO Y DÍA', 'GRUPO']],
+    body: tableRows.map(r => [r.modulo, r.asignatura, r.horario, r.grupo]),
+    theme: 'grid',
+    headStyles: { fillColor: [200,200,200], textColor: [0,0,0], fontStyle: 'bold', halign: 'center', valign: 'middle', lineColor: [0,0,0], lineWidth: 0.5 },
+    styles: { fontSize: 9, cellPadding: 3, lineColor: [0,0,0], lineWidth: 0.3, valign: 'middle' },
+    columnStyles: {
+      0: { cellWidth: 30, halign: 'center' },
+      1: { cellWidth: 50, halign: 'center' },
+      2: { cellWidth: 65 },
+      3: { cellWidth: 20, halign: 'center' }
+    },
+    margin: { left: 25, right: 25 },
+  });
+
+  yPos = (doc as any).lastAutoTable.finalY + 10;
+
+  if (singlePage) {
+    drawClosingAndSignature(doc, yPos, true);
+  } else {
+    doc.addPage();
+    if (bgImage) {
+      try { addBackgroundImage(doc, bgImage); } catch { /* noop */ }
+    }
+    let y2 = drawHeader(doc, teacherName, personalType, dateStr);
+    y2 = drawIntroText(doc, y2, licenciaturaName, periodoText);
+    drawClosingAndSignature(doc, y2, false);
+  }
+};
+
+// ── Helper interno: obtiene y normaliza los datos de horario LEIP de un maestro ──
+const fetchLeipScheduleData = async (teacherId: string, programId?: string) => {
+  const { data: schedulesDataRaw, error: schedulesError } = await supabase
+    .from('leip_schedule')
+    .select(`
+      day, start_hour, end_hour,
+      leip_subjects (name, module_name, leip_program_id, leip_programs (name)),
+      groups (name),
+      school_cycles (start_date, end_date, is_active)
+    `)
+    .eq('teacher_id', teacherId)
+    .order('day', { ascending: true });
+  if (schedulesError) throw schedulesError;
+
+  let schedulesData = schedulesDataRaw;
+  if (programId && schedulesData)
+    schedulesData = schedulesData.filter((s: any) => s.leip_subjects?.leip_program_id === programId);
+  // En LEIP NO se filtra por semestre: se incluyen todos los grupos asignados,
+  // solo se exige que el ciclo escolar esté activo.
+  if (schedulesData)
+    schedulesData = schedulesData.filter((s: any) => s.school_cycles?.is_active === true);
+
+  return schedulesData;
+};
+
+// ── Función principal: genera y descarga el oficio LEIP de un maestro ────
+export const generateOficioLeipFromTemplate = async (teacherId: string, programId?: string): Promise<void> => {
+  try {
+    const { data: teacherData, error: teacherError } = await supabase
+      .from('teachers')
+      .select(`name, categories (category)`)
+      .eq('id', teacherId)
+      .single();
+    if (teacherError) throw teacherError;
+    if (!teacherData) throw new Error('Maestro no encontrado');
+
+    const teacher = teacherData as any;
+    const teacherName = teacher.name.toUpperCase();
+    const teacherCategory = teacher.categories.category.toUpperCase();
+    const personalType = teacherCategory === 'INVITADO'
+      ? 'PERSONAL DOCENTE INVITADO'
+      : 'PERSONAL DOCENTE DE BASE';
+
+    const schedulesData = await fetchLeipScheduleData(teacherId, programId);
+    if (!schedulesData || schedulesData.length === 0)
+      throw new Error('El maestro no tiene horarios LEIP asignados en el ciclo activo');
+
+    const licenciaturaName = ((schedulesData[0] as any).leip_subjects?.leip_programs?.name || 'LEIP').toUpperCase();
+
+    const schoolCycle = (schedulesData[0] as any).school_cycles;
+    let periodoText = 'del 21 de noviembre al 30 de enero del 2026';
+    if (schoolCycle?.start_date && schoolCycle?.end_date) {
+      const months = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+      const s = new Date(schoolCycle.start_date);
+      const e = new Date(schoolCycle.end_date);
+      periodoText = `del ${s.getUTCDate()} de ${months[s.getUTCMonth()]} al ${e.getUTCDate()} de ${months[e.getUTCMonth()]} del ${e.getUTCFullYear()}`;
+    }
+
+    const groupedMap = new Map<string, any>();
+    schedulesData.forEach((s: any) => {
+      const moduloLabel = s.leip_subjects?.module_name || s.leip_subjects?.name || 'N/D';
+      const key = `${moduloLabel}_${s.groups?.name}_${s.leip_subjects?.name}`;
+      if (!groupedMap.has(key))
+        groupedMap.set(key, {
+          modulo: moduloLabel,
+          asignatura: s.leip_subjects?.name || 'N/D',
+          grupo: s.groups?.name || 'N/D',
+          schedules: [],
+        });
+      groupedMap.get(key)!.schedules.push(`${s.day} De ${formatHour(s.start_hour)} a ${formatHour(s.end_hour)}`);
+    });
+    const tableRows: LeipScheduleRow[] = Array.from(groupedMap.values()).map(item => ({
+      modulo: item.modulo, asignatura: item.asignatura,
+      horario: item.schedules.join('\n'), grupo: item.grupo,
+    }));
+
+    const doc = new jsPDF({ format: 'letter' });
+    let bgImage: string | null = null;
+    try { bgImage = await loadImageAsBase64('/images/upnimg.jpg'); } catch { console.warn('No se pudo cargar imagen de fondo'); }
+
+    await buildOficioLeipPdf(doc, teacherName, personalType, licenciaturaName, periodoText, tableRows, bgImage);
+    doc.save(`Oficio_LEIP_${teacher.name.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`);
+  } catch (error: any) {
+    console.error('Error generating oficio LEIP:', error);
+    throw error;
+  }
+};
+
+// ── Versión blob LEIP (para ZIP) ──────────────────────────────────────────
+const generateOficioLeipBlob = async (teacherId: string, programId?: string): Promise<{ blob: Blob; fileName: string; teacherName: string } | null> => {
+  try {
+    const { data: teacherData, error: teacherError } = await supabase
+      .from('teachers')
+      .select(`name, categories (category)`)
+      .eq('id', teacherId)
+      .single();
+    if (teacherError) throw teacherError;
+    if (!teacherData) throw new Error('Maestro no encontrado');
+
+    const teacher = teacherData as any;
+    const teacherName = teacher.name.toUpperCase();
+    const teacherCategory = teacher.categories.category.toUpperCase();
+    const personalType = teacherCategory === 'INVITADO'
+      ? 'PERSONAL DOCENTE INVITADO'
+      : 'PERSONAL DOCENTE DE BASE';
+
+    const schedulesData = await fetchLeipScheduleData(teacherId, programId);
+    if (!schedulesData || schedulesData.length === 0) {
+      console.warn(`Maestro ${teacher.name} no tiene horarios LEIP en el ciclo activo`);
+      return null;
+    }
+
+    const licenciaturaName = ((schedulesData[0] as any).leip_subjects?.leip_programs?.name || 'LEIP').toUpperCase();
+
+    const schoolCycle = (schedulesData[0] as any).school_cycles;
+    let periodoText = 'del 21 de noviembre al 30 de enero del 2026';
+    if (schoolCycle?.start_date && schoolCycle?.end_date) {
+      const months = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+      const s = new Date(schoolCycle.start_date);
+      const e = new Date(schoolCycle.end_date);
+      periodoText = `del ${s.getUTCDate()} de ${months[s.getUTCMonth()]} al ${e.getUTCDate()} de ${months[e.getUTCMonth()]} del ${e.getUTCFullYear()}`;
+    }
+
+    const groupedMap = new Map<string, any>();
+    schedulesData.forEach((s: any) => {
+      const moduloLabel = s.leip_subjects?.module_name || s.leip_subjects?.name || 'N/D';
+      const key = `${moduloLabel}_${s.groups?.name}_${s.leip_subjects?.name}`;
+      if (!groupedMap.has(key))
+        groupedMap.set(key, {
+          modulo: moduloLabel,
+          asignatura: s.leip_subjects?.name || 'N/D',
+          grupo: s.groups?.name || 'N/D',
+          schedules: [],
+        });
+      groupedMap.get(key)!.schedules.push(`${s.day} De ${formatHour(s.start_hour)} a ${formatHour(s.end_hour)}`);
+    });
+    const tableRows: LeipScheduleRow[] = Array.from(groupedMap.values()).map(item => ({
+      modulo: item.modulo, asignatura: item.asignatura,
+      horario: item.schedules.join('\n'), grupo: item.grupo,
+    }));
+
+    const doc = new jsPDF({ format: 'letter' });
+    let bgImage: string | null = null;
+    try { bgImage = await loadImageAsBase64('/images/upnimg.jpg'); } catch { console.warn('No se pudo cargar imagen de fondo'); }
+
+    await buildOficioLeipPdf(doc, teacherName, personalType, licenciaturaName, periodoText, tableRows, bgImage);
+
+    const blob = doc.output('blob');
+    const fileName = `Oficio_LEIP_${teacher.name.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
+    return { blob, fileName, teacherName: teacher.name };
+  } catch (error: any) {
+    console.error('Error generating oficio LEIP blob:', error);
+    return null;
+  }
+};
+
+// ── Descargar todos los oficios LEIP de un maestro (uno por programa LEIP) ──
+export const downloadAllOficiosLeipForTeacher = async (teacherId: string): Promise<void> => {
+  try {
+    const { data: schedules, error } = await supabase
+      .from('leip_schedule')
+      .select('leip_subjects(leip_program_id, leip_programs(name))')
+      .eq('teacher_id', teacherId);
+    if (error) throw error;
+    if (!schedules || schedules.length === 0) throw new Error('El maestro no tiene horarios LEIP asignados');
+
+    const programIds = new Set<string>();
+    schedules.forEach((s: any) => { if (s.leip_subjects?.leip_program_id) programIds.add(s.leip_subjects.leip_program_id); });
+    if (programIds.size === 0) throw new Error('No se encontraron programas LEIP para este maestro');
+
+    if (programIds.size === 1) {
+      await generateOficioLeipFromTemplate(teacherId, Array.from(programIds)[0]);
+      return;
+    }
+
+    const zip = new JSZip();
+    for (const programId of Array.from(programIds)) {
+      const result = await generateOficioLeipBlob(teacherId, programId);
+      if (result) zip.file(result.fileName, result.blob);
+    }
+    const zipBlob = await zip.generateAsync({ type: 'blob' });
+    const teacherData = await supabase.from('teachers').select('name').eq('id', teacherId).single();
+    const teacherName = teacherData.data?.name.replace(/\s+/g, '_') || 'maestro';
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(zipBlob);
+    link.download = `Oficios_LEIP_${teacherName}_${new Date().toISOString().split('T')[0]}.zip`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  } catch (error: any) {
+    console.error('Error:', error);
+    throw error;
+  }
+};
+
+// ── Descargar todos los oficios LEIP de todos los maestros (de un programa o de todos) ──
+export const downloadAllOficiosLeipForAllTeachers = async (programId?: string): Promise<void> => {
+  try {
+    const { data: schedules, error } = await supabase
+      .from('leip_schedule')
+      .select('teacher_id, teachers(id, name), leip_subjects(leip_program_id)');
+    if (error) throw error;
+    if (!schedules || schedules.length === 0) throw new Error('No hay maestros con horarios LEIP asignados');
+
+    let filteredSchedules = schedules;
+    if (programId)
+      filteredSchedules = schedules.filter((s: any) => s.leip_subjects?.leip_program_id === programId);
+    if (filteredSchedules.length === 0) throw new Error('No hay maestros con horarios LEIP asignados para este programa');
+
+    const teacherIds = new Set<string>();
+    filteredSchedules.forEach((s: any) => { if (s.teacher_id) teacherIds.add(s.teacher_id); });
+    if (teacherIds.size === 0) throw new Error('No se encontraron maestros');
+
+    const zip = new JSZip();
+    let successCount = 0;
+    for (const teacherId of Array.from(teacherIds)) {
+      const result = await generateOficioLeipBlob(teacherId, programId);
+      if (result) { zip.file(result.fileName, result.blob); successCount++; }
+    }
+    if (successCount === 0) throw new Error('No se pudo generar ningún oficio LEIP');
+
+    const zipBlob = await zip.generateAsync({ type: 'blob' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(zipBlob);
+    link.download = `Oficios_LEIP_Todos_Maestros_${new Date().toISOString().split('T')[0]}.zip`;
     link.click();
     URL.revokeObjectURL(link.href);
   } catch (error: any) {

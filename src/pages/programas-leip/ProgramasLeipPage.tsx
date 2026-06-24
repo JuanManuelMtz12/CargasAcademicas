@@ -46,9 +46,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Plus, Edit, Trash2, Users, BookOpen, Calendar } from 'lucide-react';
+import { Plus, Edit, Trash2, Users, BookOpen, Calendar, FileText } from 'lucide-react';
 import ManageTeachersModal from '@/components/ManageTeachersModal';
 import CalendarioAcademicoModal from '@/components/CalendarioAcademicoModal';
+import { downloadAllOficiosLeipForAllTeachers } from '@/utils/oficioGenerator';
 
 interface LeipProgram {
   id: string;
@@ -95,6 +96,7 @@ export default function ProgramasLeipPage() {
   const [managingProgram, setManagingProgram] = useState<LeipProgramWithRelations | null>(null);
   const [isCalendarioModalOpen, setIsCalendarioModalOpen] = useState(false);
   const [calendarioProgram, setCalendarioProgram] = useState<LeipProgramWithRelations | null>(null);
+  const [downloadingOficiosId, setDownloadingOficiosId] = useState<string | null>(null);
 
   const [formData, setFormData] = useState<FormData>({
     name: '',
@@ -382,6 +384,19 @@ export default function ProgramasLeipPage() {
     setCalendarioProgram(null);
   };
 
+  const handleDownloadOficios = async (program: LeipProgramWithRelations) => {
+    setDownloadingOficiosId(program.id);
+    try {
+      await downloadAllOficiosLeipForAllTeachers(program.id);
+      toast.success('Oficios generados exitosamente');
+    } catch (error: any) {
+      console.error('Error downloading oficios:', error);
+      toast.error(error.message || 'Error al generar los oficios');
+    } finally {
+      setDownloadingOficiosId(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -484,6 +499,17 @@ export default function ProgramasLeipPage() {
                           >
                             <Calendar className="w-4 h-4" />
                             Calendario
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleDownloadOficios(program)}
+                            disabled={downloadingOficiosId === program.id}
+                            className="gap-1 text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+                            title="Descargar oficios de todos los maestros de este programa"
+                          >
+                            <FileText className="w-4 h-4" />
+                            {downloadingOficiosId === program.id ? 'Generando...' : 'Oficios'}
                           </Button>
                           <Button
                             variant="outline"

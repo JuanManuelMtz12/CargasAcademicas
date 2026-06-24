@@ -106,16 +106,32 @@ function addHeaderLogosAndTitle(
   if (logoUPNBase64) doc.addImage(logoUPNBase64, 'PNG', pageWidth - 40, yPosition, 25, 21);
 
   const centerX = pageWidth / 2;
+  // Ancho máximo de texto para que NUNCA se encime con los logos (reservamos espacio a ambos lados)
+  const maxTextWidth = pageWidth - 130;
+
   let textY = yPosition + 7;
   doc.setFontSize(11);
   doc.setFont('helvetica', 'bold');
   doc.text('UNIVERSIDAD PEDAGÓGICA NACIONAL', centerX, textY, { align: 'center' }); textY += 5;
   doc.text('UNIDAD 212 TEZIUTLÁN, PUE.', centerX, textY, { align: 'center' }); textY += 5;
-  doc.text(titleLine3, centerX, textY, { align: 'center' }); textY += 6;
-  doc.setFontSize(12);
-  doc.text(titleLine4, centerX, textY, { align: 'center' });
 
-  return textY + 10;
+  // titleLine3 (ej. "ASIGNACIÓN DE CARGAS ACADÉMICAS") casi siempre cabe en una línea
+  const line3Wrapped: string[] = doc.splitTextToSize(titleLine3, maxTextWidth);
+  line3Wrapped.forEach((line: string) => {
+    doc.text(line, centerX, textY, { align: 'center' });
+    textY += 5;
+  });
+  textY += 1;
+
+  // titleLine4 (ej. "PROGRAMA: ...") puede ser largo, se ajusta a varias líneas si es necesario
+  doc.setFontSize(12);
+  const line4Wrapped: string[] = doc.splitTextToSize(titleLine4, maxTextWidth);
+  line4Wrapped.forEach((line: string) => {
+    doc.text(line, centerX, textY, { align: 'center' });
+    textY += 6;
+  });
+
+  return textY + 5;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
