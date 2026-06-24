@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+}import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
@@ -22,8 +22,12 @@ import {
 } from '@/components/ui/alert-dialog';
 import {
   Plus, Edit, Trash2, Clock, AlertCircle, CheckCircle, AlertTriangle,
-  ArrowLeft, Calendar,
+  ArrowLeft, Calendar, FileText,
 } from 'lucide-react';
+import {
+  generateOficioLeipFromTemplate,
+  downloadAllOficiosLeipForAllTeachers,
+} from '@/utils/oficioGenerator';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -116,6 +120,10 @@ export default function LeipHorariosPage() {
   const [formGroupId, setFormGroupId]       = useState('');
   const [formCycleId, setFormCycleId]       = useState('');
   const [daySchedules, setDaySchedules]     = useState<DaySchedule[]>([]);
+
+  // Estados de descarga de oficios
+  const [downloadingOficioTeacherId, setDownloadingOficioTeacherId] = useState<string | null>(null);
+  const [downloadingAllOficios, setDownloadingAllOficios] = useState(false);
 
   // ── Carga de datos ──────────────────────────────────────────────────────────
 
@@ -334,6 +342,35 @@ export default function LeipHorariosPage() {
     }
   };
 
+  // ── Oficios ─────────────────────────────────────────────────────────────────
+
+  const handleDownloadOficio = async (teacherId: string) => {
+    setDownloadingOficioTeacherId(teacherId);
+    try {
+      await generateOficioLeipFromTemplate(teacherId, programId);
+      toast.success('Oficio generado exitosamente');
+    } catch (err: any) {
+      console.error('Error generando oficio:', err);
+      toast.error(err.message || 'Error al generar el oficio');
+    } finally {
+      setDownloadingOficioTeacherId(null);
+    }
+  };
+
+  const handleDownloadAllOficios = async () => {
+    if (!programId) return;
+    setDownloadingAllOficios(true);
+    try {
+      await downloadAllOficiosLeipForAllTeachers(programId);
+      toast.success('Oficios generados exitosamente');
+    } catch (err: any) {
+      console.error('Error generando oficios:', err);
+      toast.error(err.message || 'Error al generar los oficios');
+    } finally {
+      setDownloadingAllOficios(false);
+    }
+  };
+
   // ── Filtros y agrupación ────────────────────────────────────────────────────
 
   if (error) {
@@ -425,10 +462,21 @@ export default function LeipHorariosPage() {
               <p className="text-gray-600">{(program?.sede as any)?.name}</p>
             </div>
           </div>
-          <Button onClick={() => openModal()}>
-            <Plus className="h-4 w-4 mr-2" />
-            Nueva Asignación
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={handleDownloadAllOficios}
+              disabled={downloadingAllOficios || groupedArray.length === 0}
+              className="gap-2 text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+            >
+              <FileText className="h-4 w-4" />
+              {downloadingAllOficios ? 'Generando...' : 'Descargar Oficios'}
+            </Button>
+            <Button onClick={() => openModal()}>
+              <Plus className="h-4 w-4 mr-2" />
+              Nueva Asignación
+            </Button>
+          </div>
         </div>
 
         {/* Filtros */}
@@ -520,6 +568,16 @@ export default function LeipHorariosPage() {
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end space-x-1">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleDownloadOficio(item.teacherId)}
+                              disabled={downloadingOficioTeacherId === item.teacherId}
+                              title="Descargar oficio de este maestro"
+                              className="text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+                            >
+                              <FileText className="h-3 w-3" />
+                            </Button>
                             <Button variant="outline" size="sm" onClick={() => openModal(item.schedulesList)}>
                               <Edit className="h-3 w-3" />
                             </Button>
