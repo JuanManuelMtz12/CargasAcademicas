@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { Lock, Mail } from 'lucide-react';
+import { MaintenanceModal } from '@/components/MaintenanceModal';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
