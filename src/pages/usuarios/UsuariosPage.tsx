@@ -2,12 +2,16 @@ import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/store/authStore';
 import { toast } from 'sonner';
-import { Plus, Trash2, X, Shield, ShieldCheck, Eye, Edit, Trash, PlusCircle } from 'lucide-react';
+import { Plus, Trash2, X, Shield, ShieldCheck, ShieldQuestion, Eye, Edit, Trash, PlusCircle } from 'lucide-react';
 import type { User } from '@supabase/supabase-js';
+
+// Roles soportados por el sistema. Si en el futuro se habilita 'invitado' en la
+// base de datos (ver CHECK de public.users), agrégalo aquí también.
+type UserRole = 'admin' | 'coordinador' | 'maestro';
 
 type UserWithMetadata = User & {
   user_metadata: {
-    role?: 'admin' | 'coordinador';
+    role?: UserRole;
   };
   module_permissions?: ModulePermission[];
   allowed_programs?: Program[];
@@ -38,6 +42,10 @@ const AVAILABLE_MODULES = [
   { id: 'Disponibilidad', name: 'Disponibilidad' },
 ];
 
+// Roles que administran sus propios permisos de módulo/programa vía el formulario.
+// 'admin' queda fuera porque tiene acceso total por defecto.
+const ROLES_WITH_CUSTOM_PERMISSIONS: UserRole[] = ['coordinador', 'maestro'];
+
 export default function UsuariosPage() {
   const currentUser = useAuthStore((state) => state.user);
   const [users, setUsers] = useState<UserWithMetadata[]>([]);
@@ -47,14 +55,14 @@ export default function UsuariosPage() {
   const [formData, setFormData] = useState({
     email: '',
     password: '',
-    role: '' as 'admin' | 'coordinador' | '',
+    role: '' as UserRole | '',
   });
   const [modulePermissions, setModulePermissions] = useState<Record<string, ModulePermission>>({});
   const [selectedPrograms, setSelectedPrograms] = useState<string[]>([]);
   const [allPrograms, setAllPrograms] = useState<Program[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterRole, setFilterRole] = useState<'all' | 'admin' | 'coordinador'>('all');
+  const [filterRole, setFilterRole] = useState<'all' | UserRole>('all');
 
   useEffect(() => {
     loadUsers();
@@ -79,14 +87,14 @@ export default function UsuariosPage() {
   const loadUsers = async () => {
     try {
       setLoading(true);
-      
+
       const { data, error } = await supabase.functions.invoke('manage-users', {
         body: { action: 'list' }
       });
 
       if (error) throw error;
       if (!data.success) throw new Error(data.error);
-      
+
       setUsers(data.users as UserWithMetadata[]);
     } catch (error: any) {
       console.error('Error loading users:', error);
@@ -98,13 +106,13 @@ export default function UsuariosPage() {
 
   // Filtrar usuarios basado en búsqueda y rol
   const filteredUsers = users.filter(user => {
-    const matchesSearch = searchTerm === '' || 
+    const matchesSearch = searchTerm === '' ||
       user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
       user.user_metadata?.role?.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    const matchesRole = filterRole === 'all' || 
+
+    const matchesRole = filterRole === 'all' ||
       user.user_metadata?.role === filterRole;
-    
+
     return matchesSearch && matchesRole;
   });
 
@@ -113,23 +121,23 @@ export default function UsuariosPage() {
     if (password.length < 8) {
       return 'La contraseña debe tener al menos 8 caracteres';
     }
-    
+
     if (!/[A-Z]/.test(password)) {
       return 'La contraseña debe contener al menos una letra mayúscula';
     }
-    
+
     if (!/[a-z]/.test(password)) {
       return 'La contraseña debe contener al menos una letra minúscula';
     }
-    
+
     if (!/[0-9]/.test(password)) {
       return 'La contraseña debe contener al menos un número';
     }
-    
+
     if (!/[!@#$%^&*()_+\-=\[\]{};'"\\|,.<>\/?]/.test(password)) {
       return 'La contraseña debe contener al menos un carácter especial';
     }
-    
+
     return null;
   };
 
@@ -141,7 +149,7 @@ export default function UsuariosPage() {
         password: '',
         role: user.user_metadata?.role || '',
       });
-      
+
       // Cargar permisos de módulos
       const permsMap: Record<string, ModulePermission> = {};
       if (user.module_permissions) {
@@ -150,7 +158,7 @@ export default function UsuariosPage() {
         });
       }
       setModulePermissions(permsMap);
-      
+
       // Cargar programas permitidos
       if (user.allowed_programs) {
         setSelectedPrograms(user.allowed_programs.map(p => p.id));
@@ -184,7 +192,7 @@ export default function UsuariosPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!formData.email.trim()) {
       toast.error('El email es requerido');
       return;
@@ -209,19 +217,19 @@ export default function UsuariosPage() {
       }
     }
 
-    // Validaciones para coordinadores
-    if (formData.role === 'coordinador') {
+    // Validaciones para roles con permisos personalizados (coordinador, maestro)
+    if (ROLES_WITH_CUSTOM_PERMISSIONS.includes(formData.role)) {
       const hasAnyModulePermission = Object.values(modulePermissions).some(
         perm => perm.can_view || perm.can_create || perm.can_edit || perm.can_delete
       );
-      
+
       if (!hasAnyModulePermission) {
-        toast.error('Debe asignar al menos un módulo al coordinador');
+        toast.error('Debe asignar al menos un módulo');
         return;
       }
 
       if (selectedPrograms.length === 0) {
-        toast.error('Debe asignar al menos un programa al coordinador');
+        toast.error('Debe asignar al menos un programa');
         return;
       }
     }
@@ -230,14 +238,16 @@ export default function UsuariosPage() {
       setIsSubmitting(true);
 
       // Preparar permisos de módulos para enviar
-      const module_permissions = formData.role === 'coordinador'
+      const module_permissions = ROLES_WITH_CUSTOM_PERMISSIONS.includes(formData.role as UserRole)
         ? Object.values(modulePermissions).filter(
             perm => perm.can_view || perm.can_create || perm.can_edit || perm.can_delete
           )
         : undefined;
 
       // Preparar IDs de programas
-      const program_ids = formData.role === 'coordinador' ? selectedPrograms : undefined;
+      const program_ids = ROLES_WITH_CUSTOM_PERMISSIONS.includes(formData.role as UserRole)
+        ? selectedPrograms
+        : undefined;
 
       if (editingUser) {
         // Editar
@@ -253,7 +263,7 @@ export default function UsuariosPage() {
 
         if (error) throw error;
         if (!data.success) throw new Error(data.error);
-        
+
         toast.success('Usuario actualizado correctamente');
       } else {
         // Crear nuevo usuario
@@ -270,7 +280,7 @@ export default function UsuariosPage() {
 
         if (error) throw error;
         if (!data.success) throw new Error(data.error);
-        
+
         toast.success('Usuario creado correctamente');
       }
 
@@ -305,7 +315,7 @@ export default function UsuariosPage() {
 
       if (error) throw error;
       if (!data.success) throw new Error(data.error);
-      
+
       toast.success('Usuario eliminado correctamente');
       loadUsers();
     } catch (error: any) {
@@ -313,8 +323,6 @@ export default function UsuariosPage() {
       toast.error('Error al eliminar: ' + error.message);
     }
   };
-
-
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('es-MX', {
@@ -368,19 +376,42 @@ export default function UsuariosPage() {
     });
   };
 
-  const getRoleBadge = (role: 'admin' | 'coordinador' | undefined) => {
-    if (role === 'admin') {
+  // Metadata visual por rol: badge, color y etiqueta. Al agregar un rol nuevo
+  // (p.ej. 'invitado'), solo hace falta añadir una entrada aquí.
+  const ROLE_BADGE_CONFIG: Record<UserRole, { label: string; className: string; icon: typeof Shield }> = {
+    admin: {
+      label: 'Admin',
+      className: 'bg-purple-100 text-purple-800',
+      icon: ShieldCheck,
+    },
+    coordinador: {
+      label: 'Coordinador',
+      className: 'bg-blue-100 text-blue-800',
+      icon: Shield,
+    },
+    maestro: {
+      label: 'Maestro',
+      className: 'bg-green-100 text-green-800',
+      icon: ShieldQuestion,
+    },
+  };
+
+  const getRoleBadge = (role: UserRole | undefined) => {
+    const config = role ? ROLE_BADGE_CONFIG[role] : undefined;
+
+    if (!config) {
       return (
-        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
-          <ShieldCheck className="w-3 h-3" />
-          Admin
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
+          Sin rol
         </span>
       );
     }
+
+    const Icon = config.icon;
     return (
-      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-        <Shield className="w-3 h-3" />
-        Coordinador
+      <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium ${config.className}`}>
+        <Icon className="w-3 h-3" />
+        {config.label}
       </span>
     );
   };
@@ -393,10 +424,10 @@ export default function UsuariosPage() {
         </span>
       );
     }
-    
+
     const moduleCount = user.module_permissions?.length || 0;
     const programCount = user.allowed_programs?.length || 0;
-    
+
     return (
       <span className="text-sm text-gray-600 dark:text-slate-400">
         {moduleCount} módulo{moduleCount !== 1 ? 's' : ''}, {programCount} programa{programCount !== 1 ? 's' : ''}
@@ -432,7 +463,7 @@ export default function UsuariosPage() {
       {/* Stats */}
       <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg p-4 border border-blue-100">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-6 flex-wrap">
             <div>
               <p className="text-sm text-gray-600 font-medium">Total de usuarios</p>
               <p className="text-2xl font-bold text-gray-900 dark:text-slate-100">{filteredUsers.length}</p>
@@ -449,6 +480,13 @@ export default function UsuariosPage() {
               <p className="text-sm text-gray-600 font-medium">Coordinadores</p>
               <p className="text-2xl font-bold text-blue-700">
                 {filteredUsers.filter((u) => u.user_metadata?.role === 'coordinador').length}
+              </p>
+            </div>
+            <div className="h-12 w-px bg-gray-300"></div>
+            <div>
+              <p className="text-sm text-gray-600 font-medium">Maestros</p>
+              <p className="text-2xl font-bold text-green-700">
+                {filteredUsers.filter((u) => u.user_metadata?.role === 'maestro').length}
               </p>
             </div>
           </div>
@@ -491,23 +529,24 @@ export default function UsuariosPage() {
             <select
               id="filter-role"
               value={filterRole}
-              onChange={(e) => setFilterRole(e.target.value as 'all' | 'admin' | 'coordinador')}
+              onChange={(e) => setFilterRole(e.target.value as 'all' | UserRole)}
               className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100"
             >
               <option value="all">Todos los roles</option>
               <option value="admin">Solo Administradores</option>
               <option value="coordinador">Solo Coordinadores</option>
+              <option value="maestro">Solo Maestros</option>
             </select>
           </div>
         </div>
-        
+
         {/* Resultados de búsqueda */}
         {(searchTerm || filterRole !== 'all') && (
           <div className="mt-3 flex items-center justify-between text-sm text-gray-600 dark:text-slate-400">
             <span>
               Mostrando {filteredUsers.length} de {users.length} usuarios
               {searchTerm && ` para "${searchTerm}"`}
-              {filterRole !== 'all' && ` filtrados por ${filterRole === 'admin' ? 'administradores' : 'coordinadores'}`}
+              {filterRole !== 'all' && ` filtrados por ${ROLE_BADGE_CONFIG[filterRole]?.label ?? filterRole}`}
             </span>
             {(searchTerm || filterRole !== 'all') && (
               <button
@@ -556,8 +595,8 @@ export default function UsuariosPage() {
                 </tr>
               ) : (
                 filteredUsers.map((user) => (
-                  <tr 
-                    key={user.id} 
+                  <tr
+                    key={user.id}
                     className={`hover:bg-gray-50 ${user.id === currentUser?.id ? 'bg-blue-50' : ''}`}
                   >
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -661,9 +700,9 @@ export default function UsuariosPage() {
                       type="password"
                       value={formData.password}
                       onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                      placeholder="Mínimo 6 caracteres"
+                      placeholder="Mínimo 8 caracteres"
                       required
-                      minLength={6}
+                      minLength={8}
                       className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100 placeholder:text-gray-400 dark:placeholder:text-slate-500"
                     />
                     <p className="mt-1 text-xs text-gray-500">
@@ -683,41 +722,54 @@ export default function UsuariosPage() {
                   <select
                     id="role"
                     value={formData.role}
-                    onChange={(e) => setFormData({ ...formData, role: e.target.value as 'admin' | 'coordinador' })}
+                    onChange={(e) => setFormData({ ...formData, role: e.target.value as UserRole })}
                     required
                     className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100 placeholder:text-gray-400 dark:placeholder:text-slate-500"
                   >
                     <option value="">Seleccione un rol</option>
                     <option value="admin">Administrador</option>
                     <option value="coordinador">Coordinador</option>
+                    <option value="maestro">Maestro</option>
                   </select>
                 </div>
 
                 {/* Info del rol */}
                 {formData.role && (
                   <div className={`rounded-lg p-3 border ${
-                    formData.role === 'admin' 
-                      ? 'bg-purple-50 border-purple-200' 
-                      : 'bg-blue-50 border-blue-200'
+                    formData.role === 'admin'
+                      ? 'bg-purple-50 border-purple-200'
+                      : formData.role === 'coordinador'
+                      ? 'bg-blue-50 border-blue-200'
+                      : 'bg-green-50 border-green-200'
                   }`}>
                     <p className={`text-sm font-medium ${
-                      formData.role === 'admin' ? 'text-purple-800' : 'text-blue-800'
+                      formData.role === 'admin'
+                        ? 'text-purple-800'
+                        : formData.role === 'coordinador'
+                        ? 'text-blue-800'
+                        : 'text-green-800'
                     }`}>
-                      {formData.role === 'admin' ? 'Administrador' : 'Coordinador'}
+                      {ROLE_BADGE_CONFIG[formData.role].label}
                     </p>
                     <p className={`text-xs mt-1 ${
-                      formData.role === 'admin' ? 'text-purple-700' : 'text-blue-700'
+                      formData.role === 'admin'
+                        ? 'text-purple-700'
+                        : formData.role === 'coordinador'
+                        ? 'text-blue-700'
+                        : 'text-green-700'
                     }`}>
-                      {formData.role === 'admin' 
+                      {formData.role === 'admin'
                         ? 'Acceso completo al sistema, puede gestionar usuarios y toda la configuración'
-                        : 'Acceso a gestión de horarios, maestros, materias y programas según permisos asignados'
+                        : formData.role === 'coordinador'
+                        ? 'Acceso a gestión de horarios, maestros, materias y programas según permisos asignados'
+                        : 'Acceso limitado a sus grupos, materias y calendario según permisos asignados'
                       }
                     </p>
                   </div>
                 )}
 
-                {/* Sección de Permisos de Módulos - Solo para coordinadores */}
-                {formData.role === 'coordinador' && (
+                {/* Sección de Permisos de Módulos - Coordinador y Maestro */}
+                {ROLES_WITH_CUSTOM_PERMISSIONS.includes(formData.role as UserRole) && (
                   <div className="border border-gray-200 rounded-lg p-4">
                     <h3 className="text-sm font-semibold text-gray-900 mb-3">
                       Permisos de Módulos <span className="text-red-500">*</span>
@@ -814,8 +866,8 @@ export default function UsuariosPage() {
                   </div>
                 )}
 
-                {/* Sección de Programas Permitidos - Solo para coordinadores */}
-                {formData.role === 'coordinador' && (
+                {/* Sección de Programas Permitidos - Coordinador y Maestro */}
+                {ROLES_WITH_CUSTOM_PERMISSIONS.includes(formData.role as UserRole) && (
                   <div className="border border-gray-200 rounded-lg p-4">
                     <h3 className="text-sm font-semibold text-gray-900 mb-3">
                       Programas Permitidos <span className="text-red-500">*</span>
