@@ -2,12 +2,11 @@ import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/store/authStore';
 import { toast } from 'sonner';
-import { Plus, Trash2, X, Shield, ShieldCheck, ShieldQuestion, Eye, Edit, Trash, PlusCircle } from 'lucide-react';
+import { Plus, Trash2, X, Shield, ShieldCheck, ShieldQuestion, ShieldAlert, Eye, Edit, Trash, PlusCircle } from 'lucide-react';
 import type { User } from '@supabase/supabase-js';
 
-// Roles soportados por el sistema. Si en el futuro se habilita 'invitado' en la
-// base de datos (ver CHECK de public.users), agrégalo aquí también.
-type UserRole = 'admin' | 'coordinador' | 'maestro';
+// Roles soportados por el sistema.
+type UserRole = 'admin' | 'coordinador' | 'maestro' | 'invitado';
 
 type UserWithMetadata = User & {
   user_metadata: {
@@ -44,7 +43,11 @@ const AVAILABLE_MODULES = [
 
 // Roles que administran sus propios permisos de módulo/programa vía el formulario.
 // 'admin' queda fuera porque tiene acceso total por defecto.
-const ROLES_WITH_CUSTOM_PERMISSIONS: UserRole[] = ['coordinador', 'maestro'];
+const ROLES_WITH_CUSTOM_PERMISSIONS: UserRole[] = ['coordinador', 'maestro', 'invitado'];
+
+// Roles restringidos a solo lectura: aunque el admin les asigne módulos,
+// nunca pueden tener can_create / can_edit / can_delete.
+const READ_ONLY_ROLES: UserRole[] = ['invitado'];
 
 export default function UsuariosPage() {
   const currentUser = useAuthStore((state) => state.user);
@@ -208,8 +211,9 @@ export default function UsuariosPage() {
       return;
     }
 
-    // Validar contraseña si se está creando un usuario
-    if (!editingUser && formData.password) {
+    // Validar contraseña si se está creando un usuario, o si se está
+    // estableciendo una nueva contraseña al editar uno existente.
+    if (formData.password) {
       const passwordError = validatePassword(formData.password);
       if (passwordError) {
         toast.error(passwordError);
@@ -217,7 +221,7 @@ export default function UsuariosPage() {
       }
     }
 
-    // Validaciones para roles con permisos personalizados (coordinador, maestro)
+    // Validaciones para roles con permisos personalizados (coordinador, maestro, invitado)
     if (ROLES_WITH_CUSTOM_PERMISSIONS.includes(formData.role)) {
       const hasAnyModulePermission = Object.values(modulePermissions).some(
         perm => perm.can_view || perm.can_create || perm.can_edit || perm.can_delete
@@ -237,11 +241,18 @@ export default function UsuariosPage() {
     try {
       setIsSubmitting(true);
 
-      // Preparar permisos de módulos para enviar
+      // Preparar permisos de módulos para enviar. Para roles de solo lectura,
+      // forzamos can_create/can_edit/can_delete = false sin importar lo que
+      // haya quedado marcado en el estado local.
+      const isReadOnlyRole = READ_ONLY_ROLES.includes(formData.role as UserRole);
       const module_permissions = ROLES_WITH_CUSTOM_PERMISSIONS.includes(formData.role as UserRole)
-        ? Object.values(modulePermissions).filter(
-            perm => perm.can_view || perm.can_create || perm.can_edit || perm.can_delete
-          )
+        ? Object.values(modulePermissions)
+            .filter(perm => perm.can_view || perm.can_create || perm.can_edit || perm.can_delete)
+            .map(perm =>
+              isReadOnlyRole
+                ? { ...perm, can_view: true, can_create: false, can_edit: false, can_delete: false }
+                : perm
+            )
         : undefined;
 
       // Preparar IDs de programas
@@ -258,13 +269,20 @@ export default function UsuariosPage() {
             newRole: formData.role,
             module_permissions,
             program_ids,
+            // Solo se envía si el admin escribió una nueva contraseña;
+            // si se deja en blanco, la contraseña actual no cambia.
+            password: formData.password ? formData.password : undefined,
           }
         });
 
         if (error) throw error;
         if (!data.success) throw new Error(data.error);
 
-        toast.success('Usuario actualizado correctamente');
+        toast.success(
+          formData.password
+            ? 'Usuario y contraseña actualizados correctamente'
+            : 'Usuario actualizado correctamente'
+        );
       } else {
         // Crear nuevo usuario
         const { data, error } = await supabase.functions.invoke('manage-users', {
@@ -339,6 +357,11 @@ export default function UsuariosPage() {
     permissionType: 'can_view' | 'can_create' | 'can_edit' | 'can_delete',
     value: boolean
   ) => {
+    // Los roles de solo lectura no pueden marcar create/edit/delete.
+    if (READ_ONLY_ROLES.includes(formData.role as UserRole) && permissionType !== 'can_view') {
+      return;
+    }
+
     setModulePermissions(prev => {
       const current = prev[moduleName] || {
         module_name: moduleName,
@@ -376,8 +399,7 @@ export default function UsuariosPage() {
     });
   };
 
-  // Metadata visual por rol: badge, color y etiqueta. Al agregar un rol nuevo
-  // (p.ej. 'invitado'), solo hace falta añadir una entrada aquí.
+  // Metadata visual por rol: badge, color y etiqueta.
   const ROLE_BADGE_CONFIG: Record<UserRole, { label: string; className: string; icon: typeof Shield }> = {
     admin: {
       label: 'Admin',
@@ -393,6 +415,11 @@ export default function UsuariosPage() {
       label: 'Maestro',
       className: 'bg-green-100 text-green-800',
       icon: ShieldQuestion,
+    },
+    invitado: {
+      label: 'Invitado',
+      className: 'bg-gray-100 text-gray-700',
+      icon: ShieldAlert,
     },
   };
 
@@ -431,6 +458,7 @@ export default function UsuariosPage() {
     return (
       <span className="text-sm text-gray-600 dark:text-slate-400">
         {moduleCount} módulo{moduleCount !== 1 ? 's' : ''}, {programCount} programa{programCount !== 1 ? 's' : ''}
+        {user.user_metadata?.role === 'invitado' && ' (solo lectura)'}
       </span>
     );
   };
@@ -442,6 +470,8 @@ export default function UsuariosPage() {
       </div>
     );
   }
+
+  const isReadOnlyRoleSelected = READ_ONLY_ROLES.includes(formData.role as UserRole);
 
   return (
     <div className="space-y-6">
@@ -487,6 +517,13 @@ export default function UsuariosPage() {
               <p className="text-sm text-gray-600 font-medium">Maestros</p>
               <p className="text-2xl font-bold text-green-700">
                 {filteredUsers.filter((u) => u.user_metadata?.role === 'maestro').length}
+              </p>
+            </div>
+            <div className="h-12 w-px bg-gray-300"></div>
+            <div>
+              <p className="text-sm text-gray-600 font-medium">Invitados</p>
+              <p className="text-2xl font-bold text-gray-700">
+                {filteredUsers.filter((u) => u.user_metadata?.role === 'invitado').length}
               </p>
             </div>
           </div>
@@ -536,6 +573,7 @@ export default function UsuariosPage() {
               <option value="admin">Solo Administradores</option>
               <option value="coordinador">Solo Coordinadores</option>
               <option value="maestro">Solo Maestros</option>
+              <option value="invitado">Solo Invitados</option>
             </select>
           </div>
         </div>
@@ -689,27 +727,28 @@ export default function UsuariosPage() {
                   )}
                 </div>
 
-                {/* Password - Solo en creación */}
-                {!editingUser && (
-                  <div>
-                    <label htmlFor="password" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">
-                      Contraseña <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      id="password"
-                      type="password"
-                      value={formData.password}
-                      onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                      placeholder="Mínimo 8 caracteres"
-                      required
-                      minLength={8}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100 placeholder:text-gray-400 dark:placeholder:text-slate-500"
-                    />
-                    <p className="mt-1 text-xs text-gray-500">
-                      La contraseña debe tener al menos 8 caracteres, una mayúscula, una minúscula, un número y un carácter especial
-                    </p>
-                  </div>
-                )}
+                {/* Password */}
+                <div>
+                  <label htmlFor="password" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">
+                    Contraseña {!editingUser && <span className="text-red-500">*</span>}
+                  </label>
+                  <input
+                    id="password"
+                    type="password"
+                    value={formData.password}
+                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                    placeholder={editingUser ? 'Dejar en blanco para no cambiarla' : 'Mínimo 8 caracteres'}
+                    required={!editingUser}
+                    minLength={8}
+                    autoComplete="new-password"
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100 placeholder:text-gray-400 dark:placeholder:text-slate-500"
+                  />
+                  <p className="mt-1 text-xs text-gray-500">
+                    {editingUser
+                      ? 'Solo se actualizará si escribes una nueva contraseña. Debe tener al menos 8 caracteres, una mayúscula, una minúscula, un número y un carácter especial.'
+                      : 'La contraseña debe tener al menos 8 caracteres, una mayúscula, una minúscula, un número y un carácter especial'}
+                  </p>
+                </div>
 
                 {/* Rol */}
                 <div>
@@ -730,6 +769,7 @@ export default function UsuariosPage() {
                     <option value="admin">Administrador</option>
                     <option value="coordinador">Coordinador</option>
                     <option value="maestro">Maestro</option>
+                    <option value="invitado">Invitado (solo lectura)</option>
                   </select>
                 </div>
 
@@ -740,14 +780,18 @@ export default function UsuariosPage() {
                       ? 'bg-purple-50 border-purple-200'
                       : formData.role === 'coordinador'
                       ? 'bg-blue-50 border-blue-200'
-                      : 'bg-green-50 border-green-200'
+                      : formData.role === 'maestro'
+                      ? 'bg-green-50 border-green-200'
+                      : 'bg-gray-50 border-gray-200'
                   }`}>
                     <p className={`text-sm font-medium ${
                       formData.role === 'admin'
                         ? 'text-purple-800'
                         : formData.role === 'coordinador'
                         ? 'text-blue-800'
-                        : 'text-green-800'
+                        : formData.role === 'maestro'
+                        ? 'text-green-800'
+                        : 'text-gray-800'
                     }`}>
                       {ROLE_BADGE_CONFIG[formData.role].label}
                     </p>
@@ -756,23 +800,32 @@ export default function UsuariosPage() {
                         ? 'text-purple-700'
                         : formData.role === 'coordinador'
                         ? 'text-blue-700'
-                        : 'text-green-700'
+                        : formData.role === 'maestro'
+                        ? 'text-green-700'
+                        : 'text-gray-700'
                     }`}>
                       {formData.role === 'admin'
                         ? 'Acceso completo al sistema, puede gestionar usuarios y toda la configuración'
                         : formData.role === 'coordinador'
                         ? 'Acceso a gestión de horarios, maestros, materias y programas según permisos asignados'
-                        : 'Acceso limitado a sus grupos, materias y calendario según permisos asignados'
+                        : formData.role === 'maestro'
+                        ? 'Acceso limitado a sus grupos, materias y calendario según permisos asignados'
+                        : 'Acceso de solo lectura a los módulos y programas que le asignes. No puede crear, editar ni eliminar nada.'
                       }
                     </p>
                   </div>
                 )}
 
-                {/* Sección de Permisos de Módulos - Coordinador y Maestro */}
+                {/* Sección de Permisos de Módulos - Coordinador, Maestro e Invitado */}
                 {ROLES_WITH_CUSTOM_PERMISSIONS.includes(formData.role as UserRole) && (
                   <div className="border border-gray-200 rounded-lg p-4">
                     <h3 className="text-sm font-semibold text-gray-900 mb-3">
                       Permisos de Módulos <span className="text-red-500">*</span>
+                      {isReadOnlyRoleSelected && (
+                        <span className="text-xs font-normal text-gray-500 ml-2">
+                          (Invitado: solo se puede marcar "Ver")
+                        </span>
+                      )}
                     </h3>
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
@@ -831,30 +884,33 @@ export default function UsuariosPage() {
                                   <input
                                     type="checkbox"
                                     checked={perm.can_create}
+                                    disabled={isReadOnlyRoleSelected}
                                     onChange={(e) =>
                                       handleModulePermissionChange(module.name, 'can_create', e.target.checked)
                                     }
-                                    className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500 dark:focus:ring-blue-400 bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100 placeholder:text-gray-400 dark:placeholder:text-slate-500"
+                                    className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500 dark:focus:ring-blue-400 bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100 placeholder:text-gray-400 dark:placeholder:text-slate-500 disabled:opacity-30 disabled:cursor-not-allowed"
                                   />
                                 </td>
                                 <td className="py-2 px-2 text-center">
                                   <input
                                     type="checkbox"
                                     checked={perm.can_edit}
+                                    disabled={isReadOnlyRoleSelected}
                                     onChange={(e) =>
                                       handleModulePermissionChange(module.name, 'can_edit', e.target.checked)
                                     }
-                                    className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500 dark:focus:ring-blue-400 bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100 placeholder:text-gray-400 dark:placeholder:text-slate-500"
+                                    className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500 dark:focus:ring-blue-400 bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100 placeholder:text-gray-400 dark:placeholder:text-slate-500 disabled:opacity-30 disabled:cursor-not-allowed"
                                   />
                                 </td>
                                 <td className="py-2 px-2 text-center">
                                   <input
                                     type="checkbox"
                                     checked={perm.can_delete}
+                                    disabled={isReadOnlyRoleSelected}
                                     onChange={(e) =>
                                       handleModulePermissionChange(module.name, 'can_delete', e.target.checked)
                                     }
-                                    className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500 dark:focus:ring-blue-400 bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100 placeholder:text-gray-400 dark:placeholder:text-slate-500"
+                                    className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500 dark:focus:ring-blue-400 bg-white dark:bg-slate-700 text-gray-900 dark:text-slate-100 placeholder:text-gray-400 dark:placeholder:text-slate-500 disabled:opacity-30 disabled:cursor-not-allowed"
                                   />
                                 </td>
                               </tr>
@@ -866,7 +922,7 @@ export default function UsuariosPage() {
                   </div>
                 )}
 
-                {/* Sección de Programas Permitidos - Coordinador y Maestro */}
+                {/* Sección de Programas Permitidos - Coordinador, Maestro e Invitado */}
                 {ROLES_WITH_CUSTOM_PERMISSIONS.includes(formData.role as UserRole) && (
                   <div className="border border-gray-200 rounded-lg p-4">
                     <h3 className="text-sm font-semibold text-gray-900 mb-3">
