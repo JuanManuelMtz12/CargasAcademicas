@@ -13,7 +13,10 @@ import { useAuthStore } from '@/store/authStore';
 type UserRole = 'admin' | 'coordinador' | 'invitado';
 
 const READ_ONLY_ROLES: UserRole[] = ['invitado'];
-const ROLES_REQUIRING_PROGRAM: UserRole[] = ['coordinador', 'invitado'];
+// El invitado no pertenece a una licenciatura (program), sino a un departamento
+// administrativo (Recursos Humanos, Servicios Escolares, etc.)
+const ROLES_REQUIRING_PROGRAM: UserRole[] = ['coordinador'];
+const ROLES_REQUIRING_DEPARTMENT: UserRole[] = ['invitado'];
 
 // Módulos disponibles con validaciones de rol
 const AVAILABLE_MODULES = [
@@ -43,6 +46,7 @@ interface User {
   last_sign_in_at?: string;
   module_permissions?: ModulePermission[];
   allowed_programs?: Program[];
+  allowed_departments?: Departamento[];
 }
 
 interface ModulePermission {
@@ -57,6 +61,11 @@ interface Program {
   id: string;
   name: string;
   type: 'LIC' | 'LEIP' | 'MAE';
+}
+
+interface Departamento {
+  id: string;
+  name: string;
 }
 
 interface ErrorInfo {
@@ -114,6 +123,7 @@ export default function UsuariosPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [modulePermissions, setModulePermissions] = useState<{[key: string]: ModulePermission}>({});
   const [allPrograms, setAllPrograms] = useState<Program[]>([]);
+  const [allDepartamentos, setAllDepartamentos] = useState<Departamento[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterRole, setFilterRole] = useState<'all' | UserRole>('all');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -127,6 +137,7 @@ export default function UsuariosPage() {
   });
 
   const [selectedProgram, setSelectedProgram] = useState<string>('');
+  const [selectedDepartamento, setSelectedDepartamento] = useState<string>('');
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
@@ -276,16 +287,23 @@ export default function UsuariosPage() {
 
       setUsers(data.users || []);
 
-      const { data: programs, error: programsError } = await supabase
-        .from('programs')
-        .select('id, name, type')
-        .order('name');
+      const [{ data: programs, error: programsError }, { data: departamentos, error: departamentosError }] = await Promise.all([
+        supabase.from('programs').select('id, name, type').order('name'),
+        supabase.from('departamentos').select('id, name').order('name'),
+      ]);
 
       if (programsError) {
         console.error('Error cargando programas:', programsError);
         setAllPrograms([]);
       } else {
         setAllPrograms(programs || []);
+      }
+
+      if (departamentosError) {
+        console.error('Error cargando departamentos:', departamentosError);
+        setAllDepartamentos([]);
+      } else {
+        setAllDepartamentos(departamentos || []);
       }
 
       if (showToast) {
@@ -324,6 +342,7 @@ export default function UsuariosPage() {
     });
     setModulePermissions(permsMap);
     setSelectedProgram(targetUser.allowed_programs?.[0]?.id ?? '');
+    setSelectedDepartamento(targetUser.allowed_departments?.[0]?.id ?? '');
 
     setIsDialogOpen(true);
   }, []);
@@ -341,6 +360,11 @@ export default function UsuariosPage() {
 
     if (ROLES_REQUIRING_PROGRAM.includes(formData.role) && !selectedProgram) {
       toast.error(`Los usuarios con rol "${ROLE_LABELS[formData.role]}" deben tener un programa asignado`);
+      return;
+    }
+
+    if (ROLES_REQUIRING_DEPARTMENT.includes(formData.role) && !selectedDepartamento) {
+      toast.error(`Los usuarios con rol "${ROLE_LABELS[formData.role]}" deben tener un departamento asignado`);
       return;
     }
 
@@ -363,6 +387,7 @@ export default function UsuariosPage() {
           newRole: formData.role,
           module_permissions: permissionsArray,
           program_ids: selectedProgram ? [selectedProgram] : [],
+          department_ids: selectedDepartamento ? [selectedDepartamento] : [],
           // Solo se envía si el admin escribió una nueva contraseña
           password: formData.password ? formData.password : undefined,
         },
@@ -386,7 +411,7 @@ export default function UsuariosPage() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [editingUser, formData, modulePermissions, selectedProgram, validateModuleForRole, loadData]);
+  }, [editingUser, formData, modulePermissions, selectedProgram, selectedDepartamento, validateModuleForRole, loadData]);
 
   const handleDeleteUser = useCallback((targetUser: User) => {
     if (targetUser.email === 'admin@upn.mx') {
@@ -430,6 +455,7 @@ export default function UsuariosPage() {
     });
     setModulePermissions({});
     setSelectedProgram('');
+    setSelectedDepartamento('');
   }, []);
 
   // Crear usuario vía la Edge Function manage-users (creación administrada,
@@ -449,6 +475,11 @@ export default function UsuariosPage() {
 
     if (ROLES_REQUIRING_PROGRAM.includes(formData.role) && !selectedProgram) {
       toast.error(`Los usuarios con rol "${ROLE_LABELS[formData.role]}" deben tener un programa asignado`);
+      return;
+    }
+
+    if (ROLES_REQUIRING_DEPARTMENT.includes(formData.role) && !selectedDepartamento) {
+      toast.error(`Los usuarios con rol "${ROLE_LABELS[formData.role]}" deben tener un departamento asignado`);
       return;
     }
 
@@ -472,6 +503,7 @@ export default function UsuariosPage() {
           role: formData.role,
           module_permissions,
           program_ids: selectedProgram ? [selectedProgram] : undefined,
+          department_ids: selectedDepartamento ? [selectedDepartamento] : undefined,
         },
       });
 
@@ -489,7 +521,7 @@ export default function UsuariosPage() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [formData, selectedProgram, allPrograms, loadData, resetForm]);
+  }, [formData, selectedProgram, selectedDepartamento, allPrograms, loadData, resetForm]);
 
   const handleModulePermissionChange = useCallback((moduleId: string, permission: keyof ModulePermission, value: boolean) => {
     const validation = validateModuleForRole(moduleId, formData.role);
@@ -551,6 +583,7 @@ export default function UsuariosPage() {
   }, [loadData]);
 
   const requiresProgram = ROLES_REQUIRING_PROGRAM.includes(formData.role);
+  const requiresDepartment = ROLES_REQUIRING_DEPARTMENT.includes(formData.role);
   const isReadOnlyRoleSelected = READ_ONLY_ROLES.includes(formData.role);
 
   return (
@@ -699,6 +732,33 @@ export default function UsuariosPage() {
                             allPrograms.map(program => (
                               <SelectItem key={program.id} value={program.id}>
                                 {program.name} ({program.type})
+                              </SelectItem>
+                            ))
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+
+                  {requiresDepartment && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">
+                        Departamento <span className="text-red-500">*</span>
+                      </label>
+                      <Select
+                        value={selectedDepartamento || 'none'}
+                        onValueChange={v => setSelectedDepartamento(v === 'none' ? '' : v)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Seleccionar departamento..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {allDepartamentos.length === 0 ? (
+                            <SelectItem value="none" disabled>No hay departamentos disponibles</SelectItem>
+                          ) : (
+                            allDepartamentos.map(dep => (
+                              <SelectItem key={dep.id} value={dep.id}>
+                                {dep.name}
                               </SelectItem>
                             ))
                           )}
