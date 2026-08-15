@@ -598,10 +598,23 @@ export default function UsuariosPage() {
           </p>
         </div>
 
-        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <Dialog
+          open={isDialogOpen}
+          onOpenChange={(open) => {
+            setIsDialogOpen(open);
+            if (!open) {
+              setEditingUser(null);
+              resetForm();
+            }
+          }}
+        >
           <DialogTrigger asChild>
             <Button
-              onClick={() => setIsDialogOpen(true)}
+              onClick={() => {
+                setEditingUser(null);
+                resetForm();
+                setIsDialogOpen(true);
+              }}
               className="bg-blue-600 hover:bg-blue-700 text-white"
             >
               <Plus className="w-4 h-4 mr-2" />
@@ -902,7 +915,11 @@ export default function UsuariosPage() {
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => setIsDialogOpen(false)}
+                  onClick={() => {
+                    setIsDialogOpen(false);
+                    setEditingUser(null);
+                    resetForm();
+                  }}
                   disabled={isSubmitting}
                 >
                   Cancelar
