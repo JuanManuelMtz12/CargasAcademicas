@@ -30,10 +30,13 @@ import EspecializacionesPage from '@/pages/EspecializacionesPage';
 import ProgramasLeipPage from '@/pages/programas-leip/ProgramasLeipPage';
 import MateriasLeipPage from '@/pages/materias-leip/MateriasLeipPage';
 import CreateAdminPage from '@/pages/CreateAdminPage';
+import { useSessionLogger } from '@/store/useSessionLogger';
+import HistorialSesionesPage from '@/pages/usuarios/HistorialSesionesPage';
 
 function App() {
   const initialize = useAuthStore((state) => state.initialize);
-
+  useSessionLogger(); // ← agregar esta línea
+  
   useEffect(() => {
     initialize();
   }, [initialize]);
@@ -155,6 +158,24 @@ function App() {
                 </ProtectedRoute>
               }
             />
+
+            <Route
+  path="usuarios"
+  element={
+    <ProtectedRoute requireAdmin>
+      <UsuariosPageV2 />
+    </ProtectedRoute>
+  }
+/>
+
+<Route
+  path="historial-sesiones"
+  element={
+    <ProtectedRoute requireAdmin>
+      <HistorialSesionesPage />
+    </ProtectedRoute>
+  }
+/>
             
             <Route path="debug-permissions" element={<DebugPermissionsPage />} />
           </Route>
