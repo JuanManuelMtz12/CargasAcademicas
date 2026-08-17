@@ -25,6 +25,7 @@ import {
   BookMarked,
   Target,
   ChevronDown,
+  History, // ← agregar
 } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
@@ -85,6 +86,7 @@ const menuGroups: MenuGroup[] = [
       { icon: GraduationCap, label: 'Maestros Múltiples Prog.', path: '/maestros-multiples', moduleId: 'maestros-multiples' },
       { icon: AlertTriangle, label: 'Maestros Excedidos', path: '/maestros-excedidos', adminOnly: true },
       { icon: UserCircle, label: 'Usuarios', path: '/usuarios', adminOnly: true },
+        { icon: History, label: 'Historial de Sesiones', path: '/historial-sesiones', adminOnly: true }, // ← agregar
       { icon: FolderOpen, label: 'Módulos', path: '/modulos', adminOnly: true },
     ],
   },
