@@ -121,7 +121,7 @@ const drawClosingAndSignature = (doc: jsPDF, y: number, forcedMinY = false) => {
   doc.text('ATENTAMENTE', 105, signatureY, { align: 'center' });
   doc.text('"EDUCAR PARA TRANSFORMAR"', 105, signatureY + 6, { align: 'center' });
   doc.text('C. JUAN IGNACIO HERNÁNDEZ VÁZQUEZ', 105, signatureY + 24, { align: 'center' });
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
   doc.text('DIRECTOR DE LA UNIDAD UPN 212 TEZIUTLÁN DE LA UNIVERSIDAD', 105, signatureY + 29, { align: 'center' });
   doc.text('PEDAGÓGICA NACIONAL', 105, signatureY + 33, { align: 'center' });
 };
