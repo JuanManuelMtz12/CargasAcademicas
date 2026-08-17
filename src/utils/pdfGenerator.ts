@@ -231,11 +231,11 @@ export const generateOficioPDF = async (teacherId: string): Promise<void> => {
     doc.text('"EDUCAR PARA TRANSFORMAR"', 105, signatureY + 6, { align: 'center' });
 
     doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
-    doc.text('DR. JUAN IGNACIO HERNÁNDEZ VÁZQUEZ', 105, signatureY + 21, { align: 'center' });
+    doc.text('C. JUAN IGNACIO HERNÁNDEZ VÁZQUEZ', 105, signatureY + 21, { align: 'center' });
 
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-    doc.text('DIRECTOR DE LA UNIDAD UPN 212 TEZIUTLÁN', 105, signatureY + 26, { align: 'center' });
-    doc.text('DE LA UNIVERSIDAD PEDAGÓGICA NACIONAL', 105, signatureY + 31, { align: 'center' });
+    doc.text('DIRECTOR DE LA UNIDAD UPN 212 TEZIUTLÁN DE LA UNIVERSIDAD', 105, signatureY + 26, { align: 'center' });
+    doc.text('PEDAGÓGICA NACIONAL', 105, signatureY + 31, { align: 'center' });
 
     // Guardar PDF
     doc.save(`Oficio_${teacher.name.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`);
