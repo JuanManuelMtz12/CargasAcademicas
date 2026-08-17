@@ -233,7 +233,7 @@ export const generateOficioPDF = async (teacherId: string): Promise<void> => {
     doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
     doc.text('C. JUAN IGNACIO HERNÁNDEZ VÁZQUEZ', 105, signatureY + 21, { align: 'center' });
 
-    doc.setFont('helvetica', 'bolf'); doc.setFontSize(9);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
     doc.text('DIRECTOR DE LA UNIDAD UPN 212 TEZIUTLÁN DE LA UNIVERSIDAD', 105, signatureY + 26, { align: 'center' });
     doc.text('PEDAGÓGICA NACIONAL', 105, signatureY + 31, { align: 'center' });
 
