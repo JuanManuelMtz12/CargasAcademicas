@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/store/authStore';
 import { toast } from 'sonner';
-import { Plus, Trash2, X, Shield, ShieldCheck, ShieldQuestion, ShieldAlert, Eye, Edit, Trash, PlusCircle } from 'lucide-react';
+import { Plus, Trash2, X, Shield, ShieldCheck, ShieldQuestion, ShieldAlert, Eye, Edit, Trash, PlusCircle, Lock, Unlock } from 'lucide-react';
 import type { User } from '@supabase/supabase-js';
 
 // Roles soportados por el sistema.
@@ -14,6 +14,8 @@ type UserWithMetadata = User & {
   };
   module_permissions?: ModulePermission[];
   allowed_programs?: Program[];
+  // Fecha hasta la que el usuario está bloqueado (null/pasado = no bloqueado)
+  banned_until?: string | null;
 };
 
 type ModulePermission = {
@@ -49,6 +51,13 @@ const ROLES_WITH_CUSTOM_PERMISSIONS: UserRole[] = ['coordinador', 'maestro', 'in
 // nunca pueden tener can_create / can_edit / can_delete.
 const READ_ONLY_ROLES: UserRole[] = ['invitado'];
 
+// Un usuario está bloqueado si banned_until existe y es una fecha futura
+// (así es como Supabase Auth determina si puede iniciar sesión).
+const isUserBlocked = (user: UserWithMetadata): boolean => {
+  if (!user.banned_until) return false;
+  return new Date(user.banned_until).getTime() > Date.now();
+};
+
 export default function UsuariosPage() {
   const currentUser = useAuthStore((state) => state.user);
   const [users, setUsers] = useState<UserWithMetadata[]>([]);
@@ -66,6 +75,7 @@ export default function UsuariosPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterRole, setFilterRole] = useState<'all' | UserRole>('all');
+  const [togglingBlockUserId, setTogglingBlockUserId] = useState<string | null>(null);
 
   useEffect(() => {
     loadUsers();
@@ -153,7 +163,6 @@ export default function UsuariosPage() {
         role: user.user_metadata?.role || '',
       });
 
-      // Cargar permisos de módulos
       const permsMap: Record<string, ModulePermission> = {};
       if (user.module_permissions) {
         user.module_permissions.forEach(perm => {
@@ -162,7 +171,6 @@ export default function UsuariosPage() {
       }
       setModulePermissions(permsMap);
 
-      // Cargar programas permitidos
       if (user.allowed_programs) {
         setSelectedPrograms(user.allowed_programs.map(p => p.id));
       } else {
@@ -211,8 +219,6 @@ export default function UsuariosPage() {
       return;
     }
 
-    // Validar contraseña si se está creando un usuario, o si se está
-    // estableciendo una nueva contraseña al editar uno existente.
     if (formData.password) {
       const passwordError = validatePassword(formData.password);
       if (passwordError) {
@@ -221,7 +227,6 @@ export default function UsuariosPage() {
       }
     }
 
-    // Validaciones para roles con permisos personalizados (coordinador, maestro, invitado)
     if (ROLES_WITH_CUSTOM_PERMISSIONS.includes(formData.role)) {
       const hasAnyModulePermission = Object.values(modulePermissions).some(
         perm => perm.can_view || perm.can_create || perm.can_edit || perm.can_delete
@@ -241,9 +246,6 @@ export default function UsuariosPage() {
     try {
       setIsSubmitting(true);
 
-      // Preparar permisos de módulos para enviar. Para roles de solo lectura,
-      // forzamos can_create/can_edit/can_delete = false sin importar lo que
-      // haya quedado marcado en el estado local.
       const isReadOnlyRole = READ_ONLY_ROLES.includes(formData.role as UserRole);
       const module_permissions = ROLES_WITH_CUSTOM_PERMISSIONS.includes(formData.role as UserRole)
         ? Object.values(modulePermissions)
@@ -255,13 +257,11 @@ export default function UsuariosPage() {
             )
         : undefined;
 
-      // Preparar IDs de programas
       const program_ids = ROLES_WITH_CUSTOM_PERMISSIONS.includes(formData.role as UserRole)
         ? selectedPrograms
         : undefined;
 
       if (editingUser) {
-        // Editar
         const { data, error } = await supabase.functions.invoke('manage-users', {
           body: {
             action: 'update',
@@ -269,8 +269,6 @@ export default function UsuariosPage() {
             newRole: formData.role,
             module_permissions,
             program_ids,
-            // Solo se envía si el admin escribió una nueva contraseña;
-            // si se deja en blanco, la contraseña actual no cambia.
             password: formData.password ? formData.password : undefined,
           }
         });
@@ -284,7 +282,6 @@ export default function UsuariosPage() {
             : 'Usuario actualizado correctamente'
         );
       } else {
-        // Crear nuevo usuario
         const { data, error } = await supabase.functions.invoke('manage-users', {
           body: {
             action: 'create',
@@ -313,7 +310,6 @@ export default function UsuariosPage() {
   };
 
   const handleDelete = async (user: UserWithMetadata) => {
-    // No permitir eliminar al usuario actual
     if (user.id === currentUser?.id) {
       toast.error('No puedes eliminar tu propia cuenta');
       return;
@@ -342,6 +338,40 @@ export default function UsuariosPage() {
     }
   };
 
+  // Bloquear/desbloquear: usa las funciones RPC block_user / unblock_user
+  // (SECURITY DEFINER, validan que quien llama sea admin y que no se
+  // bloquee a sí mismo). No pasa por la edge function manage-users.
+  const handleToggleBlock = async (user: UserWithMetadata) => {
+    if (user.id === currentUser?.id) {
+      toast.error('No puedes bloquear tu propia cuenta');
+      return;
+    }
+
+    const blocked = isUserBlocked(user);
+    const action = blocked ? 'unblock_user' : 'block_user';
+    const confirmMsg = blocked
+      ? `¿Desbloquear a "${user.email}"? Podrá volver a iniciar sesión de inmediato.`
+      : `¿Bloquear a "${user.email}"? No podrá iniciar sesión hasta que lo desbloquees.`;
+
+    if (!confirm(confirmMsg)) return;
+
+    try {
+      setTogglingBlockUserId(user.id);
+      const { data, error } = await supabase.rpc(action, { p_user_id: user.id });
+
+      if (error) throw error;
+      if (!data.success) throw new Error(data.error);
+
+      toast.success(blocked ? 'Usuario desbloqueado' : 'Usuario bloqueado');
+      loadUsers();
+    } catch (error: any) {
+      console.error('Error al cambiar bloqueo:', error);
+      toast.error('Error: ' + error.message);
+    } finally {
+      setTogglingBlockUserId(null);
+    }
+  };
+
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('es-MX', {
       year: 'numeric',
@@ -357,7 +387,6 @@ export default function UsuariosPage() {
     permissionType: 'can_view' | 'can_create' | 'can_edit' | 'can_delete',
     value: boolean
   ) => {
-    // Los roles de solo lectura no pueden marcar create/edit/delete.
     if (READ_ONLY_ROLES.includes(formData.role as UserRole) && permissionType !== 'can_view') {
       return;
     }
@@ -373,14 +402,12 @@ export default function UsuariosPage() {
 
       const updated = { ...current, [permissionType]: value };
 
-      // Si se desmarca "Ver", desmarcar todos los demás
       if (permissionType === 'can_view' && !value) {
         updated.can_create = false;
         updated.can_edit = false;
         updated.can_delete = false;
       }
 
-      // Si se marca cualquier permiso, marcar automáticamente "Ver"
       if (permissionType !== 'can_view' && value) {
         updated.can_view = true;
       }
@@ -399,7 +426,6 @@ export default function UsuariosPage() {
     });
   };
 
-  // Metadata visual por rol: badge, color y etiqueta.
   const ROLE_BADGE_CONFIG: Record<UserRole, { label: string; className: string; icon: typeof Shield }> = {
     admin: {
       label: 'Admin',
@@ -443,6 +469,16 @@ export default function UsuariosPage() {
     );
   };
 
+  const getBlockedBadge = (user: UserWithMetadata) => {
+    if (!isUserBlocked(user)) return null;
+    return (
+      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+        <Lock className="w-3 h-3" />
+        Bloqueado
+      </span>
+    );
+  };
+
   const getPermissionsDisplay = (user: UserWithMetadata) => {
     if (user.user_metadata?.role === 'admin') {
       return (
@@ -472,6 +508,7 @@ export default function UsuariosPage() {
   }
 
   const isReadOnlyRoleSelected = READ_ONLY_ROLES.includes(formData.role as UserRole);
+  const blockedCount = filteredUsers.filter(isUserBlocked).length;
 
   return (
     <div className="space-y-6">
@@ -526,6 +563,11 @@ export default function UsuariosPage() {
                 {filteredUsers.filter((u) => u.user_metadata?.role === 'invitado').length}
               </p>
             </div>
+            <div className="h-12 w-px bg-gray-300"></div>
+            <div>
+              <p className="text-sm text-gray-600 font-medium">Bloqueados</p>
+              <p className="text-2xl font-bold text-red-700">{blockedCount}</p>
+            </div>
           </div>
           <div className="text-sm text-gray-600 dark:text-slate-400">
             Usuario actual: <span className="font-semibold text-gray-900 dark:text-slate-100">{currentUser?.email}</span>
@@ -536,7 +578,6 @@ export default function UsuariosPage() {
       {/* Búsqueda y Filtros */}
       <div className="bg-white dark:bg-slate-800 rounded-lg shadow p-4 border border-gray-200 dark:border-slate-700">
         <div className="flex flex-col sm:flex-row gap-4">
-          {/* Búsqueda */}
           <div className="flex-1">
             <label htmlFor="search" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">
               Buscar usuarios
@@ -558,7 +599,6 @@ export default function UsuariosPage() {
             </div>
           </div>
 
-          {/* Filtro por rol */}
           <div className="sm:w-48">
             <label htmlFor="filter-role" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">
               Filtrar por rol
@@ -578,7 +618,6 @@ export default function UsuariosPage() {
           </div>
         </div>
 
-        {/* Resultados de búsqueda */}
         {(searchTerm || filterRole !== 'all') && (
           <div className="mt-3 flex items-center justify-between text-sm text-gray-600 dark:text-slate-400">
             <span>
@@ -635,7 +674,7 @@ export default function UsuariosPage() {
                 filteredUsers.map((user) => (
                   <tr
                     key={user.id}
-                    className={`hover:bg-gray-50 ${user.id === currentUser?.id ? 'bg-blue-50' : ''}`}
+                    className={`hover:bg-gray-50 ${user.id === currentUser?.id ? 'bg-blue-50' : ''} ${isUserBlocked(user) ? 'opacity-75' : ''}`}
                   >
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center gap-2">
@@ -648,7 +687,10 @@ export default function UsuariosPage() {
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      {getRoleBadge(user.user_metadata?.role)}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {getRoleBadge(user.user_metadata?.role)}
+                        {getBlockedBadge(user)}
+                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       {getPermissionsDisplay(user)}
@@ -668,9 +710,25 @@ export default function UsuariosPage() {
                           Editar
                         </button>
                         <button
+                          onClick={() => handleToggleBlock(user)}
+                          disabled={user.id === currentUser?.id || togglingBlockUserId === user.id}
+                          className={`p-1.5 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                            isUserBlocked(user)
+                              ? 'text-green-600 hover:text-green-900 hover:bg-green-50'
+                              : 'text-orange-600 hover:text-orange-900 hover:bg-orange-50'
+                          }`}
+                          title={
+                            user.id === currentUser?.id
+                              ? 'No puedes bloquear tu propia cuenta'
+                              : isUserBlocked(user) ? 'Desbloquear usuario' : 'Bloquear usuario'
+                          }
+                        >
+                          {isUserBlocked(user) ? <Unlock className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
+                        </button>
+                        <button
                           onClick={() => handleDelete(user)}
                           disabled={user.id === currentUser?.id}
-                          className="text-red-600 hover:text-red-900 p-1 hover:bg-red-50 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="text-red-600 hover:text-red-900 p-1.5 hover:bg-red-50 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                           title={user.id === currentUser?.id ? 'No puedes eliminar tu propia cuenta' : 'Eliminar'}
                         >
                           <Trash2 className="w-4 h-4" />
@@ -689,7 +747,6 @@ export default function UsuariosPage() {
       {isModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white dark:bg-slate-800 rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-            {/* Modal Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-700">
               <h2 className="text-xl font-semibold text-gray-900 dark:text-slate-100">
                 {editingUser ? 'Editar Usuario' : 'Nuevo Usuario'}
@@ -702,10 +759,8 @@ export default function UsuariosPage() {
               </button>
             </div>
 
-            {/* Modal Body */}
             <form onSubmit={handleSubmit}>
               <div className="px-6 py-4 space-y-4">
-                {/* Email */}
                 <div>
                   <label htmlFor="email" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">
                     Email <span className="text-red-500">*</span>
@@ -727,7 +782,6 @@ export default function UsuariosPage() {
                   )}
                 </div>
 
-                {/* Password */}
                 <div>
                   <label htmlFor="password" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">
                     Contraseña {!editingUser && <span className="text-red-500">*</span>}
@@ -750,7 +804,6 @@ export default function UsuariosPage() {
                   </p>
                 </div>
 
-                {/* Rol */}
                 <div>
                   <label
                     htmlFor="role"
@@ -773,7 +826,6 @@ export default function UsuariosPage() {
                   </select>
                 </div>
 
-                {/* Info del rol */}
                 {formData.role && (
                   <div className={`rounded-lg p-3 border ${
                     formData.role === 'admin'
@@ -816,7 +868,6 @@ export default function UsuariosPage() {
                   </div>
                 )}
 
-                {/* Sección de Permisos de Módulos - Coordinador, Maestro e Invitado */}
                 {ROLES_WITH_CUSTOM_PERMISSIONS.includes(formData.role as UserRole) && (
                   <div className="border border-gray-200 rounded-lg p-4">
                     <h3 className="text-sm font-semibold text-gray-900 mb-3">
@@ -922,7 +973,6 @@ export default function UsuariosPage() {
                   </div>
                 )}
 
-                {/* Sección de Programas Permitidos - Coordinador, Maestro e Invitado */}
                 {ROLES_WITH_CUSTOM_PERMISSIONS.includes(formData.role as UserRole) && (
                   <div className="border border-gray-200 rounded-lg p-4">
                     <h3 className="text-sm font-semibold text-gray-900 mb-3">
@@ -957,7 +1007,6 @@ export default function UsuariosPage() {
                 )}
               </div>
 
-              {/* Modal Footer */}
               <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
                 <button
                   type="button"
