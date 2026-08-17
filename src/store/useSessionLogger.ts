@@ -22,7 +22,13 @@ export function useSessionLogger() {
   const isInitialLoad = useRef(true);
 
   useEffect(() => {
-    const { data: listener } = supabase.auth.onAuthStateChange(async (event, session) => {
+    // IMPORTANTE: el callback de onAuthStateChange se ejecuta dentro de un
+    // lock interno de supabase-js. Hacer `await` de otra llamada a Supabase
+    // (auth o base de datos) DIRECTAMENTE dentro de este callback puede
+    // bloquear ese lock y colgar la app (se queda en "Iniciando sesión...").
+    // Por eso el callback en sí NO es async: solo agenda el trabajo real
+    // con setTimeout(..., 0), que lo saca del lock y lo ejecuta después.
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
       if (isInitialLoad.current) {
         isInitialLoad.current = false;
         // No registramos nada en la carga inicial si ya había sesión;
@@ -30,58 +36,63 @@ export function useSessionLogger() {
         return;
       }
 
-      try {
-        if (event === 'SIGNED_IN' && session?.user) {
-          // Rol actual del usuario, para que el historial no dependa de
-          // hacer join contra public.users cada vez que se muestra.
-          const { data: profile } = await supabase
-            .from('users')
-            .select('role')
-            .eq('id', session.user.id)
-            .maybeSingle();
+      if (event === 'SIGNED_IN' && session?.user) {
+        const userId = session.user.id;
+        const email = session.user.email ?? '';
 
-          await supabase.from('session_log').insert({
-            user_id: session.user.id,
-            email: session.user.email,
-            role: profile?.role ?? null,
-            event_type: 'login',
-            user_agent: navigator.userAgent,
-          });
-        }
+        // Guardamos snapshot para poder loguear el logout después
+        // (en ese momento `session` ya no estará disponible).
+        sessionStorage.setItem('last_user_id', userId);
+        sessionStorage.setItem('last_user_email', email);
 
-        if (event === 'SIGNED_OUT') {
-          // En SIGNED_OUT ya no hay `session`, así que usamos el último
-          // usuario conocido guardado en localStorage por supabase-js
-          // antes de que se limpie, o lo pasamos explícitamente al
-          // llamar signOut (ver helper `signOutAndLog` más abajo).
-          const lastUserId = sessionStorage.getItem('last_user_id');
-          const lastEmail = sessionStorage.getItem('last_user_email');
-          const lastRole = sessionStorage.getItem('last_user_role');
+        setTimeout(async () => {
+          try {
+            const { data: profile } = await supabase
+              .from('users')
+              .select('role')
+              .eq('id', userId)
+              .maybeSingle();
 
-          if (lastUserId) {
+            sessionStorage.setItem('last_user_role', profile?.role ?? '');
+
             await supabase.from('session_log').insert({
-              user_id: lastUserId,
-              email: lastEmail ?? '',
-              role: lastRole,
-              event_type: 'logout',
+              user_id: userId,
+              email,
+              role: profile?.role ?? null,
+              event_type: 'login',
               user_agent: navigator.userAgent,
             });
+          } catch (err) {
+            // Nunca bloquear el login real por un fallo al loguear.
+            console.error('Error registrando evento de sesión (login):', err);
           }
+        }, 0);
+      }
 
-          sessionStorage.removeItem('last_user_id');
-          sessionStorage.removeItem('last_user_email');
-          sessionStorage.removeItem('last_user_role');
-        }
+      if (event === 'SIGNED_OUT') {
+        const lastUserId = sessionStorage.getItem('last_user_id');
+        const lastEmail = sessionStorage.getItem('last_user_email');
+        const lastRole = sessionStorage.getItem('last_user_role');
 
-        if (event === 'SIGNED_IN' && session?.user) {
-          // Guardamos snapshot para poder loguear el logout después
-          // (en ese momento `session` ya no estará disponible).
-          sessionStorage.setItem('last_user_id', session.user.id);
-          sessionStorage.setItem('last_user_email', session.user.email ?? '');
+        sessionStorage.removeItem('last_user_id');
+        sessionStorage.removeItem('last_user_email');
+        sessionStorage.removeItem('last_user_role');
+
+        if (lastUserId) {
+          setTimeout(async () => {
+            try {
+              await supabase.from('session_log').insert({
+                user_id: lastUserId,
+                email: lastEmail ?? '',
+                role: lastRole || null,
+                event_type: 'logout',
+                user_agent: navigator.userAgent,
+              });
+            } catch (err) {
+              console.error('Error registrando evento de sesión (logout):', err);
+            }
+          }, 0);
         }
-      } catch (err) {
-        // Nunca bloquear el login/logout real por un fallo al loguear.
-        console.error('Error registrando evento de sesión:', err);
       }
     });
 
