@@ -29,6 +29,8 @@ import {
 import { useState } from 'react';
 import { toast } from 'sonner';
 
+import ProtectedLayout from '@/components/ProtectedLayout';
+
 interface MenuItem {
   icon: React.ElementType;
   label: string;
@@ -233,9 +235,11 @@ export default function MainLayout() {
           </div>
         </header>
 
-        {/* Page content */}
+        {/* Page content — envuelto con ProtectedLayout para blur + marca de agua en TODO el sistema */}
         <main className="p-6 min-h-screen bg-gray-50 dark:bg-slate-900">
-          <Outlet />
+          <ProtectedLayout>
+            <Outlet />
+          </ProtectedLayout>
         </main>
 
         {/* Footer */}
