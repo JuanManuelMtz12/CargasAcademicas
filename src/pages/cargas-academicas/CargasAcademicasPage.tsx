@@ -47,6 +47,7 @@ import {
 import { Plus, Edit, Trash2, User, MapPin, Clock, FileText, Search, Download } from 'lucide-react';
 import CalendarSelector from '@/components/AcademicLoads/CalendarSelector';
 import { generateAcademicLoadPDF, generateGroupCalendarPDF, downloadPDF } from '@/utils/academicLoadPDF';
+import { useAntiScreenshot } from '@/hooks/useAntiScreenshot';
 
 interface AcademicLoad {
   id: string;
@@ -120,6 +121,10 @@ interface FormData {
 }
 
 export default function CargasAcademicasPage() {
+  // --- Protección anti-captura ---
+  const isBlurred = useAntiScreenshot();
+  const [watermarkLabel, setWatermarkLabel] = useState<string>('');
+
   const [loads, setLoads] = useState<AcademicLoad[]>([]);
   const [programs, setPrograms] = useState<Program[]>([]);
   const [specializations, setSpecializations] = useState<Specialization[]>([]);
@@ -158,7 +163,28 @@ export default function CargasAcademicasPage() {
 
   useEffect(() => {
     loadData();
+    loadCurrentUserForWatermark();
   }, []);
+
+  const loadCurrentUserForWatermark = async () => {
+    try {
+      const { data, error } = await supabase.auth.getUser();
+      if (error || !data?.user) return;
+
+      const email = data.user.email || '';
+      const now = new Date();
+      const stamp = now.toLocaleString('es-MX', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+      setWatermarkLabel(`${email} · ${stamp}`);
+    } catch (error) {
+      console.error('Error loading user for watermark:', error);
+    }
+  };
 
   const loadData = async () => {
     try {
@@ -344,7 +370,7 @@ export default function CargasAcademicasPage() {
         (days as number[]).forEach(day => {
           const year = formData.start_date ? new Date(formData.start_date).getFullYear() : new Date().getFullYear();
           const monthIndex = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'].indexOf(month.toLowerCase());
-          
+
           if (monthIndex !== -1) {
             const sessionDate = new Date(year, monthIndex, day);
             sessions.push({
@@ -524,7 +550,7 @@ export default function CargasAcademicasPage() {
   }
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
+    <div className="container mx-auto p-6 space-y-6 relative">
       <Card>
         <CardHeader>
           <div className="flex justify-between items-center">
@@ -550,155 +576,200 @@ export default function CargasAcademicasPage() {
             </div>
           </div>
         </CardHeader>
-        <CardContent>
-          {/* Filtros */}
-          <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
-              <Input
-                placeholder="Buscar..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10"
-              />
-            </div>
-            <Select value={filterStatus} onValueChange={setFilterStatus}>
-              <SelectTrigger>
-                <SelectValue placeholder="Estado" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todos los estados</SelectItem>
-                <SelectItem value="active">Activo</SelectItem>
-                <SelectItem value="inactive">Inactivo</SelectItem>
-                <SelectItem value="completed">Completado</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={filterLocation} onValueChange={setFilterLocation}>
-              <SelectTrigger>
-                <SelectValue placeholder="Ubicación" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todas las ubicaciones</SelectItem>
-                {sedes.map((sede) => (
-                  <SelectItem key={sede.id} value={sede.name}>
-                    {sede.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <div className="text-sm text-gray-600 flex items-center">
-              Total: {filteredLoads.length} cargas
-            </div>
-          </div>
 
-          {/* Tabla */}
-          <div className="rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Especialización / Módulo</TableHead>
-                  <TableHead>Grupo</TableHead>
-                  <TableHead>Asesor</TableHead>
-                  <TableHead>Horario</TableHead>
-                  <TableHead>Estado</TableHead>
-                  <TableHead className="text-right">Acciones</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredLoads.length === 0 ? (
+        {/* Wrapper con posición relativa para anclar la marca de agua y el blur */}
+        <div className="relative">
+          {/* Marca de agua: repetida en diagonal sobre el contenido sensible */}
+          {watermarkLabel && (
+            <div
+              className="pointer-events-none absolute inset-0 z-10 overflow-hidden select-none"
+              aria-hidden="true"
+            >
+              <div
+                className="grid h-full w-full opacity-[0.06] dark:opacity-[0.09]"
+                style={{
+                  gridTemplateColumns: 'repeat(3, 1fr)',
+                  gridTemplateRows: 'repeat(6, 1fr)',
+                  transform: 'rotate(-28deg) scale(1.3)',
+                }}
+              >
+                {Array.from({ length: 18 }).map((_, i) => (
+                  <span
+                    key={i}
+                    className="flex items-center justify-center text-xs font-semibold whitespace-nowrap text-gray-900 dark:text-gray-100"
+                  >
+                    {watermarkLabel}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <CardContent
+            className={
+              isBlurred
+                ? 'blur-xl select-none transition-all duration-150'
+                : 'transition-all duration-150'
+            }
+          >
+            {/* Filtros */}
+            <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+                <Input
+                  placeholder="Buscar..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-10"
+                />
+              </div>
+              <Select value={filterStatus} onValueChange={setFilterStatus}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Estado" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos los estados</SelectItem>
+                  <SelectItem value="active">Activo</SelectItem>
+                  <SelectItem value="inactive">Inactivo</SelectItem>
+                  <SelectItem value="completed">Completado</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={filterLocation} onValueChange={setFilterLocation}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Ubicación" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas las ubicaciones</SelectItem>
+                  {sedes.map((sede) => (
+                    <SelectItem key={sede.id} value={sede.name}>
+                      {sede.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <div className="text-sm text-gray-600 flex items-center">
+                Total: {filteredLoads.length} cargas
+              </div>
+            </div>
+
+            {/* Tabla */}
+            <div className="rounded-md border">
+              <Table>
+                <TableHeader>
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8 text-gray-500">
-                      No se encontraron cargas académicas
-                    </TableCell>
+                    <TableHead>Especialización / Módulo</TableHead>
+                    <TableHead>Grupo</TableHead>
+                    <TableHead>Asesor</TableHead>
+                    <TableHead>Horario</TableHead>
+                    <TableHead>Estado</TableHead>
+                    <TableHead className="text-right">Acciones</TableHead>
                   </TableRow>
-                ) : (
-                  filteredLoads.map((load) => (
-                    <TableRow key={load.id}>
-                      <TableCell>
-                        <div>
-                          <div className="font-medium">{load.module_name}</div>
-                          <div className="text-sm text-gray-500">
-                            {load.module_number} - {load.module_key}
-                          </div>
-                          <div className="text-xs text-gray-400 mt-1 line-clamp-1">
-                            {load.specialization_name}
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <MapPin className="h-4 w-4 text-gray-400" />
-                          <div>
-                            <div className="font-medium">{load.group_name}</div>
-                            <div className="text-sm text-gray-500">{load.location}</div>
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <User className="h-4 w-4 text-gray-400" />
-                          <span className="text-sm">{load.instructor_name}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <Clock className="h-4 w-4 text-gray-400" />
-                          <div>
-                            <div className="text-sm">
-                              {load.start_time.substring(0, 5)} - {load.end_time.substring(0, 5)}
-                            </div>
-                            <div className="text-xs text-gray-500">{load.work_modality}</div>
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <span
-                          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusBadgeColor(
-                            load.status
-                          )}`}
-                        >
-                          {getStatusLabel(load.status)}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleGenerateGroupPDF(load)}
-                            title="Generar calendario PDF"
-                          >
-                            <FileText className="h-4 w-4 text-blue-600" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleOpenModal(load)}
-                            title="Editar"
-                          >
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              setDeletingLoad(load);
-                              setIsDeleteDialogOpen(true);
-                            }}
-                            title="Eliminar"
-                          >
-                            <Trash2 className="h-4 w-4 text-red-600" />
-                          </Button>
-                        </div>
+                </TableHeader>
+                <TableBody>
+                  {filteredLoads.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center py-8 text-gray-500">
+                        No se encontraron cargas académicas
                       </TableCell>
                     </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </div>
-        </CardContent>
+                  ) : (
+                    filteredLoads.map((load) => (
+                      <TableRow key={load.id}>
+                        <TableCell>
+                          <div>
+                            <div className="font-medium">{load.module_name}</div>
+                            <div className="text-sm text-gray-500">
+                              {load.module_number} - {load.module_key}
+                            </div>
+                            <div className="text-xs text-gray-400 mt-1 line-clamp-1">
+                              {load.specialization_name}
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <MapPin className="h-4 w-4 text-gray-400" />
+                            <div>
+                              <div className="font-medium">{load.group_name}</div>
+                              <div className="text-sm text-gray-500">{load.location}</div>
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <User className="h-4 w-4 text-gray-400" />
+                            <span className="text-sm">{load.instructor_name}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Clock className="h-4 w-4 text-gray-400" />
+                            <div>
+                              <div className="text-sm">
+                                {load.start_time.substring(0, 5)} - {load.end_time.substring(0, 5)}
+                              </div>
+                              <div className="text-xs text-gray-500">{load.work_modality}</div>
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <span
+                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusBadgeColor(
+                              load.status
+                            )}`}
+                          >
+                            {getStatusLabel(load.status)}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleGenerateGroupPDF(load)}
+                              title="Generar calendario PDF"
+                            >
+                              <FileText className="h-4 w-4 text-blue-600" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleOpenModal(load)}
+                              title="Editar"
+                            >
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setDeletingLoad(load);
+                                setIsDeleteDialogOpen(true);
+                              }}
+                              title="Eliminar"
+                            >
+                              <Trash2 className="h-4 w-4 text-red-600" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </div>
       </Card>
+
+      {/* Overlay de aviso cuando el contenido está oculto por seguridad */}
+      {isBlurred && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 pointer-events-none">
+          <div className="bg-white dark:bg-gray-800 px-6 py-3 rounded-lg shadow-lg text-sm font-medium">
+            Contenido oculto por seguridad
+          </div>
+        </div>
+      )}
 
       {/* Modal de Formulario */}
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
