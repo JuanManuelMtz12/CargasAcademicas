@@ -1,38 +1,57 @@
 import { ReactNode, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { useAntiScreenshot } from '@/hooks/useAntiScreenshot';
 
 interface ProtectedLayoutProps {
   children: ReactNode;
 }
 
 export default function ProtectedLayout({ children }: ProtectedLayoutProps) {
-  const isBlurred = useAntiScreenshot();
+  const [isBlurred, setIsBlurred] = useState(false);
   const [watermarkLabel, setWatermarkLabel] = useState<string>('');
 
+  // Detecta pérdida de foco / cambio de pestaña para activar el blur
   useEffect(() => {
-    loadCurrentUserForWatermark();
+    const blur = () => setIsBlurred(true);
+    const unblur = () => setIsBlurred(false);
+    const handleVisibility = () => {
+      document.hidden ? blur() : unblur();
+    };
+
+    window.addEventListener('blur', blur);
+    window.addEventListener('focus', unblur);
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      window.removeEventListener('blur', blur);
+      window.removeEventListener('focus', unblur);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   }, []);
 
-  const loadCurrentUserForWatermark = async () => {
-    try {
-      const { data, error } = await supabase.auth.getUser();
-      if (error || !data?.user) return;
+  // Carga el usuario autenticado para armar la marca de agua
+  useEffect(() => {
+    const loadCurrentUserForWatermark = async () => {
+      try {
+        const { data, error } = await supabase.auth.getUser();
+        if (error || !data?.user) return;
 
-      const email = data.user.email || '';
-      const now = new Date();
-      const stamp = now.toLocaleString('es-MX', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-      setWatermarkLabel(`${email} · ${stamp}`);
-    } catch (error) {
-      console.error('Error loading user for watermark:', error);
-    }
-  };
+        const email = data.user.email || '';
+        const now = new Date();
+        const stamp = now.toLocaleString('es-MX', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+        setWatermarkLabel(`${email} · ${stamp}`);
+      } catch (error) {
+        console.error('Error loading user for watermark:', error);
+      }
+    };
+
+    loadCurrentUserForWatermark();
+  }, []);
 
   return (
     <div className="relative min-h-screen">
