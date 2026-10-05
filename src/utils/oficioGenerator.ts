@@ -15,7 +15,7 @@ const isOddSemesterGroup = (groupName: string): boolean => {
 const MAX_ROWS_SINGLE_PAGE = 6;
 
 // Y mínima para la firma cuando todo cabe en página 1
-const SIGNATURE_MIN_Y = 205;
+const SIGNATURE_MIN_Y = 190;
 // Límite inferior seguro antes del pie de página
 const FOOTER_SAFE_Y = 242;
 
@@ -111,7 +111,7 @@ const drawClosingAndSignature = (doc: jsPDF, y: number, forcedMinY = false) => {
   doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
   const split = doc.splitTextToSize(closingText, 165);
   doc.text(split, 25, y, { align: 'justify', maxWidth: 165 });
-  y += split.length * 6 + 8;
+  y += split.length * 5 + 6;
 
   // En página 1 usar Math.max para que la firma no suba encima del contenido
   const signatureY = forcedMinY ? Math.max(y, SIGNATURE_MIN_Y) : y;
