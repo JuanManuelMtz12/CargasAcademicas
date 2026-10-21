@@ -55,6 +55,13 @@ const COLORS = {
   totalText: [0, 70, 127] as [number, number, number],
 };
 
+// ─── Ajustes de tamaño (cambia aquí si todavía necesitas reducir la letra) ────
+
+const BODY_FONT_SIZE = 6.5;
+const HEAD_FONT_SIZE = 6.5;
+// Padding horizontal pequeño para que los horarios "16:00-18:00" no se partan
+const CELL_PADDING = { top: 2, bottom: 2, left: 1, right: 1 };
+
 // ─── Función principal ────────────────────────────────────────────────────────
 
 /**
@@ -75,25 +82,31 @@ export function generateTeacherSchedulePDF(
 
   const DAYS: DayKey[] = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
 
+  // Ancho útil de la página (carta horizontal = 279.4 mm, menos márgenes de 10 mm)
+  const MARGIN = 10;
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const contentWidth = pageWidth - MARGIN * 2; // ≈ 259.4 mm
+  const centerX = pageWidth / 2;
+
   // ── Encabezado institucional ───────────────────────────────────────────────
   doc.setFillColor(...COLORS.headerBg);
-  doc.rect(10, 8, 267, 16, 'F');
+  doc.rect(MARGIN, 8, contentWidth, 16, 'F');
 
   doc.setTextColor(...COLORS.headerText);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(13);
-  doc.text('CONCENTRADO DE CARGA ACADÉMICA', 143.5, 15, { align: 'center' });
+  doc.text('CONCENTRADO DE CARGA ACADÉMICA', centerX, 15, { align: 'center' });
 
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
-  doc.text('BENEMÉRITA UNIVERSIDAD AUTÓNOMA DE PUEBLA', 143.5, 21, { align: 'center' });
+  doc.text('BENEMÉRITA UNIVERSIDAD AUTÓNOMA DE PUEBLA', centerX, 21, { align: 'center' });
 
   // ── Bloque de datos del docente ────────────────────────────────────────────
   doc.setTextColor(0, 0, 0);
   doc.setFillColor(...COLORS.groupBg);
-  doc.rect(10, 26, 267, 10, 'F');
+  doc.rect(MARGIN, 26, contentWidth, 10, 'F');
   doc.setDrawColor(...COLORS.borderColor);
-  doc.rect(10, 26, 267, 10, 'S');
+  doc.rect(MARGIN, 26, contentWidth, 10, 'S');
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9);
@@ -196,34 +209,40 @@ export function generateTeacherSchedulePDF(
     head,
     body,
     theme: 'grid',
+    styles: {
+      overflow: 'linebreak',
+      cellPadding: CELL_PADDING,
+      valign: 'middle',
+    },
     headStyles: {
       fillColor: COLORS.headerBg,
       textColor: COLORS.headerText,
       fontStyle: 'bold',
-      fontSize: 7.5,
+      fontSize: HEAD_FONT_SIZE,
       halign: 'center',
       valign: 'middle',
-      cellPadding: 2,
+      cellPadding: CELL_PADDING,
     },
     bodyStyles: {
-      fontSize: 7,
-      cellPadding: 2,
+      fontSize: BODY_FONT_SIZE,
+      cellPadding: CELL_PADDING,
       valign: 'middle',
     },
+    // Suma = 258 mm (cabe en los 259.4 mm útiles de la hoja)
     columnStyles: {
-      0: { cellWidth: 38 },  // Programa
-      1: { cellWidth: 20 },  // Sede
-      2: { cellWidth: 55 },  // Materia
-      3: { cellWidth: 12 },  // Grupo
-      4: { cellWidth: 22 },  // Lunes
-      5: { cellWidth: 22 },  // Martes
-      6: { cellWidth: 22 },  // Miércoles
-      7: { cellWidth: 22 },  // Jueves
-      8: { cellWidth: 22 },  // Viernes
-      9: { cellWidth: 18 },  // Sábado
-      10: { cellWidth: 14 }, // Hrs/sem
+      0: { cellWidth: 34 },  // Programa
+      1: { cellWidth: 18 },  // Sede
+      2: { cellWidth: 56 },  // Materia
+      3: { cellWidth: 14 },  // Grupo
+      4: { cellWidth: 20 },  // Lunes
+      5: { cellWidth: 20 },  // Martes
+      6: { cellWidth: 20 },  // Miércoles
+      7: { cellWidth: 20 },  // Jueves
+      8: { cellWidth: 20 },  // Viernes
+      9: { cellWidth: 20 },  // Sábado
+      10: { cellWidth: 16 }, // Hrs/sem
     },
-    margin: { left: 10, right: 10 },
+    margin: { left: MARGIN, right: MARGIN },
     tableLineColor: COLORS.borderColor,
     tableLineWidth: 0.1,
   });
@@ -234,10 +253,10 @@ export function generateTeacherSchedulePDF(
   doc.setTextColor(120, 120, 120);
   doc.text(
     `Generado: ${new Date().toLocaleDateString('es-MX', { day: '2-digit', month: 'long', year: 'numeric' })}`,
-    10,
+    MARGIN,
     finalY
   );
-  doc.text('Documento generado automáticamente por el sistema de gestión académica', 143.5, finalY, {
+  doc.text('Documento generado automáticamente por el sistema de gestión académica', centerX, finalY, {
     align: 'center',
   });
 
