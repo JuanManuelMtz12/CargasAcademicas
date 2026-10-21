@@ -15,23 +15,22 @@ const isOddSemesterGroup = (groupName: string): boolean => {
 const MAX_ROWS_SINGLE_PAGE = 6;
 
 // Y mínima para la firma cuando todo cabe en página 1
-const SIGNATURE_MIN_Y = 205;
+const SIGNATURE_MIN_Y = 190;
 // Límite inferior seguro antes del pie de página
 const FOOTER_SAFE_Y = 242;
 
-const BG_SCALE = 0.97;
-const BG_ORIGINAL_WIDTH = 215.9;
-const BG_ORIGINAL_HEIGHT = 271.4;
+// Hoja carta: 215.9 x 279.4 mm
+const PAGE_WIDTH = 215.9;
+const PAGE_HEIGHT = 279.4;
+
+// Ajusta estos valores para estirar/encoger el membrete
+const BG_WIDTH = PAGE_WIDTH;     // ancho completo de la hoja
+const BG_HEIGHT = PAGE_HEIGHT;   // alto completo de la hoja (estira verticalmente)
+const BG_X = 0;
+const BG_Y = 0;
 
 const addBackgroundImage = (doc: jsPDF, bgImage: string) => {
-  doc.addImage(
-    bgImage,
-    'JPEG',
-    (BG_ORIGINAL_WIDTH - BG_ORIGINAL_WIDTH * BG_SCALE) / 2,
-    8,
-    BG_ORIGINAL_WIDTH * BG_SCALE,
-    BG_ORIGINAL_HEIGHT * BG_SCALE
-  );
+  doc.addImage(bgImage, 'JPEG', BG_X, BG_Y, BG_WIDTH, BG_HEIGHT);
 };
 
 const formatDateToSpanish = (date: Date): string => {
@@ -112,7 +111,7 @@ const drawClosingAndSignature = (doc: jsPDF, y: number, forcedMinY = false) => {
   doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
   const split = doc.splitTextToSize(closingText, 165);
   doc.text(split, 25, y, { align: 'justify', maxWidth: 165 });
-  y += split.length * 6 + 8;
+  y += split.length * 5 + 6;
 
   // En página 1 usar Math.max para que la firma no suba encima del contenido
   const signatureY = forcedMinY ? Math.max(y, SIGNATURE_MIN_Y) : y;
