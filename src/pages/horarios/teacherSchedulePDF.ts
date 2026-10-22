@@ -159,7 +159,14 @@ function drawJustified(
 
 // ─── Función principal ────────────────────────────────────────────────────────
 
-export function generateOficioCargaAcademicaPDF(data: OficioData): jsPDF {
+/** k = factor de compactación (1 = espacios normales, menor = más compacto). */
+function buildOficio(data: OficioData, k: number): jsPDF {
+  const tableSize = k >= 0.7 ? TABLE_SIZE : k >= 0.4 ? TABLE_SIZE - 0.5 : TABLE_SIZE - 1;
+  const pad = 0.5 + 0.8 * k;
+  // Mínimos para que nunca se vea pegado ni falte lugar para firmar
+  const signGap = Math.max(SIGN_GAP * k, 7);
+  const gapAfterTable = Math.max(GAP_AFTER_TABLE * k, 3);
+  const gapBeforeSign = Math.max(LINE_H * GAP_BEFORE_SIGN * k, 3);
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
   const pageW = doc.internal.pageSize.getWidth();   // 215.9
   const pageH = doc.internal.pageSize.getHeight();  // 279.4
@@ -179,7 +186,7 @@ export function generateOficioCargaAcademicaPDF(data: OficioData): jsPDF {
   }
   const bottomReserve = hasLetterhead
     ? data.letterheadBottomMm ?? 36
-    : footerImgH + 11 + 4;
+    : Math.max(footerImgH + 15, 36);
   const footerTop = pageH - bottomReserve;
   const contentLimit = footerTop - 2;
 
@@ -261,7 +268,7 @@ export function generateOficioCargaAcademicaPDF(data: OficioData): jsPDF {
   doc.text(`${city}, ${longDate(data.oficioDate ?? todayISO())}`, pageW - MARGIN_X, y, {
     align: 'right',
   });
-  y += LINE_H * GAP_AFTER_DATE;
+  y += LINE_H * GAP_AFTER_DATE * k;
 
   // ── Destinatario ──────────────────────────────────────────────────────────
   doc.setFont('helvetica', 'bold');
@@ -274,7 +281,7 @@ export function generateOficioCargaAcademicaPDF(data: OficioData): jsPDF {
   y += LINE_H;
   doc.setFont('helvetica', 'bold');
   doc.text('P R E S E N T E', MARGIN_X, y);
-  y += LINE_H * GAP_BEFORE_INTRO;
+  y += LINE_H * GAP_BEFORE_INTRO * k;
 
   // ── Párrafo de apertura ───────────────────────────────────────────────────
   doc.setFont('helvetica', 'normal');
@@ -284,7 +291,7 @@ export function generateOficioCargaAcademicaPDF(data: OficioData): jsPDF {
     `se le ha asignado el siguiente curso en la ${data.programName.toUpperCase()}, ` +
     `que corresponde al periodo ${periodText(data.periodStart, data.periodEnd)}.`;
   y = drawJustified(doc, intro, MARGIN_X, y, contentW);
-  y += LINE_H * GAP_BEFORE_TABLE;
+  y += LINE_H * GAP_BEFORE_TABLE * k;
 
   // ── Tabla de asignaturas ──────────────────────────────────────────────────
   const body = data.subjects.map((s) => [
@@ -302,8 +309,8 @@ export function generateOficioCargaAcademicaPDF(data: OficioData): jsPDF {
     margin: { left: MARGIN_X, right: MARGIN_X, top: TOP, bottom: bottomReserve + 2 },
     styles: {
       font: 'helvetica',
-      fontSize: TABLE_SIZE,
-      cellPadding: { top: 1.3, bottom: 1.3, left: 1.5, right: 1.5 },
+      fontSize: tableSize,
+      cellPadding: { top: pad, bottom: pad, left: 1.5, right: 1.5 },
       halign: 'center',
       valign: 'middle',
       overflow: 'linebreak',
@@ -315,7 +322,7 @@ export function generateOficioCargaAcademicaPDF(data: OficioData): jsPDF {
       fillColor: [225, 225, 225],
       textColor: [0, 0, 0],
       fontStyle: 'bold',
-      fontSize: TABLE_SIZE + 0.5,
+      fontSize: tableSize + 0.5,
     },
     // Suma = contentW (175.9 mm)
     columnStyles: {
@@ -331,7 +338,7 @@ export function generateOficioCargaAcademicaPDF(data: OficioData): jsPDF {
     },
   });
 
-  y = (doc as any).lastAutoTable.finalY + GAP_AFTER_TABLE;
+  y = (doc as any).lastAutoTable.finalY + gapAfterTable;
 
   // ── Párrafo de cierre ─────────────────────────────────────────────────────
   doc.setFont('helvetica', 'normal');
@@ -346,7 +353,7 @@ export function generateOficioCargaAcademicaPDF(data: OficioData): jsPDF {
   const closingLines: string[] = doc.splitTextToSize(closing, contentW);
   ensureSpace(closingLines.length * LINE_H + 4);
   y = drawJustified(doc, closing, MARGIN_X, y, contentW);
-  y += LINE_H * GAP_BEFORE_SIGN;
+  y += gapBeforeSign;
 
   // ── Bloque de firma (medido antes de dibujarlo) ───────────────────────────
   doc.setFont('helvetica', 'bold');
@@ -354,18 +361,19 @@ export function generateOficioCargaAcademicaPDF(data: OficioData): jsPDF {
   const cargoLines: string[] = doc.splitTextToSize(data.director.title.toUpperCase(), contentW - 10);
   const signBlockH =
     LINE_H * 2 + 2 +            // ATENTAMENTE + lema
-    SIGN_GAP +
+    signGap +
     LINE_H +                    // nombre
     cargoLines.length * LINE_H; // cargo (1, 2 o más líneas)
 
   // Si no cabe antes de la zona del pie/fondo, el bloque completo pasa a otra página
-  ensureSpace(signBlockH);
+  // (En el nivel más compacto no se manda la firma sola a otra hoja.)
+  if (k > 0.2) ensureSpace(signBlockH);
 
   doc.setFontSize(BODY_SIZE);
   doc.text('ATENTAMENTE', centerX, y, { align: 'center' });
   y += LINE_H;
   doc.text('"EDUCAR PARA TRANSFORMAR"', centerX, y, { align: 'center' });
-  y += LINE_H + 2 + SIGN_GAP;
+  y += LINE_H + 2 + signGap;
 
   doc.setFontSize(BODY_SIZE - 0.5);
   doc.text(data.director.name.toUpperCase(), centerX, y, { align: 'center' });
@@ -376,6 +384,21 @@ export function generateOficioCargaAcademicaPDF(data: OficioData): jsPDF {
   });
 
   return doc;
+}
+
+/**
+ * Genera el oficio intentando que TODO quepa en una sola página: si la firma
+ * invadiría la zona de abajo, repite el armado con espacios cada vez más compactos.
+ * La firma NUNCA se manda sola a otra hoja: si ni con el nivel más compacto cabe
+ * todo (por ejemplo, con demasiadas asignaturas), se usa ese nivel igualmente.
+ */
+export function generateOficioCargaAcademicaPDF(data: OficioData): jsPDF {
+  const levels = [1, 0.8, 0.6, 0.45, 0.3, 0.15];
+  for (const k of levels) {
+    const doc = buildOficio(data, k);
+    if (doc.getNumberOfPages() === 1) return doc;
+  }
+  return buildOficio(data, levels[levels.length - 1]);
 }
 
 /** Descarga el oficio directamente en el navegador. */
