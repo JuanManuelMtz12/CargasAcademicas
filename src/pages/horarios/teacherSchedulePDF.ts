@@ -1,278 +1,332 @@
-// src/utils/teacherSchedulePDF.ts
-// Genera el PDF de horario del docente al estilo del "Concentrado General 2026"
+// src/utils/oficioCargaAcademicaPDF.ts
+// Genera el oficio "ASIGNACIÓN DE CARGA ACADÉMICA" (hoja carta vertical).
+//
+// Diferencias clave frente a un layout con posiciones fijas:
+//  - La firma y el pie se colocan según donde termina el contenido (no con números fijos).
+//  - El cargo del director se parte en líneas medidas, así nunca se encima con la dirección.
+//  - Si la firma no cabe antes del pie, pasa automáticamente a una página nueva.
 
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
-export interface TeacherScheduleRow {
-  /** Nombre completo del docente */
+export interface OficioScheduleSlot {
+  /** Día de la semana, ej. "jueves" o "Jueves" */
+  day: string;
+  /** Hora de inicio, ej. "10:00" */
+  start: string;
+  /** Hora de fin, ej. "12:00" */
+  end: string;
+}
+
+export interface OficioSubject {
+  /** Clave de la asignatura, ej. "5284" */
+  key: string;
+  /** Nombre de la asignatura */
+  name: string;
+  /** Horarios por día */
+  schedule: OficioScheduleSlot[];
+  /** Semestre y grupo, ej. "3B" */
+  semester: string;
+}
+
+export interface OficioData {
+  /** Ej. "MTRA. NALLELY YENITZA ROMERO SALAZAR" */
   teacherName: string;
-  /** Tipo de contrato: BASE | INVITADO */
-  contractType: string;
-  /** Nombre del programa educativo (licenciatura) */
+  /** Ej. "PERSONAL DOCENTE INVITADO" */
+  contractLabel: string;
+  /** Ej. "DE LA UPN-212 TEZIUTLÁN" */
+  unitLabel: string;
+  /** Ej. "LICENCIATURA EN INTERVENCIÓN EDUCATIVA" */
   programName: string;
-  /** Sede */
-  sede: string;
-  /** Nombre de la materia/asignatura */
-  subjectName: string;
-  /** Nombre del grupo (ej. "2A") */
-  groupName: string;
-  /** Horario por día: { Lunes: { start: 16, end: 18 }, Martes: ... } */
-  daySchedules: Partial<Record<DayKey, { start: number; end: number }>>;
-  /** Horas de esta asignatura (calculadas automáticamente si no se pasan) */
-  hoursPerWeek?: number;
+  /** Fecha de inicio del periodo (YYYY-MM-DD) */
+  periodStart: string;
+  /** Fecha de fin del periodo (YYYY-MM-DD) */
+  periodEnd: string;
+  /** Fecha del oficio (YYYY-MM-DD). Por defecto, hoy. */
+  oficioDate?: string;
+  /** Ciudad del oficio. Por defecto "Teziutlán, Pue." */
+  city?: string;
+  subjects: OficioSubject[];
+  director: {
+    name: string;
+    /** Cargo completo; se parte solo en las líneas necesarias */
+    title: string;
+  };
+  /** Línea(s) del pie: dirección. */
+  addressLine?: string;
+  /** Línea del pie: teléfono y correo. */
+  contactLine?: string;
+  /** Imagen de encabezado (data URL PNG/JPEG) con los logos. Opcional. */
+  headerImage?: string;
+  /** Imagen de pie (data URL PNG/JPEG) con la greca. Opcional. */
+  footerImage?: string;
 }
 
-export type DayKey = 'Lunes' | 'Martes' | 'Miércoles' | 'Jueves' | 'Viernes' | 'Sábado';
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-// ─── Helper ───────────────────────────────────────────────────────────────────
+const MONTHS = [
+  'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+  'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
+];
 
-/** Formatea un rango de horas como "16:00-18:00" */
-function fmtRange(start: number, end: number): string {
-  return `${String(start).padStart(2, '0')}:00-${String(end).padStart(2, '0')}:00`;
+function parseISO(iso: string): { y: number; m: number; d: number } {
+  const [y, m, d] = iso.split('-').map(Number);
+  return { y, m: m - 1, d };
 }
 
-/** Calcula las horas semanales sumando todos los días */
-function calcHours(daySchedules: TeacherScheduleRow['daySchedules']): number {
-  return Object.values(daySchedules).reduce((acc, d) => {
-    if (d) return acc + (d.end - d.start);
-    return acc;
-  }, 0);
+function longDate(iso: string): string {
+  const { y, m, d } = parseISO(iso);
+  return `${d} de ${MONTHS[m]} de ${y}`;
 }
 
-// ─── Colores ──────────────────────────────────────────────────────────────────
+function periodText(startISO: string, endISO: string): string {
+  const s = parseISO(startISO);
+  const e = parseISO(endISO);
+  if (s.y === e.y) {
+    return `del ${s.d} de ${MONTHS[s.m]} al ${e.d} de ${MONTHS[e.m]} del ${e.y}`;
+  }
+  return `del ${s.d} de ${MONTHS[s.m]} del ${s.y} al ${e.d} de ${MONTHS[e.m]} del ${e.y}`;
+}
 
-const COLORS = {
-  headerBg: [0, 70, 127] as [number, number, number],       // Azul oscuro encabezado
-  headerText: [255, 255, 255] as [number, number, number],   // Blanco
-  rowBg1: [255, 255, 255] as [number, number, number],       // Blanco filas pares
-  rowBg2: [240, 248, 255] as [number, number, number],       // Azul muy claro filas impares
-  groupBg: [255, 250, 230] as [number, number, number],      // Amarillo claro bloque docente
-  totalBg: [204, 229, 255] as [number, number, number],      // Azul claro total
-  borderColor: [180, 180, 180] as [number, number, number],
-  totalText: [0, 70, 127] as [number, number, number],
-};
+function todayISO(): string {
+  const n = new Date();
+  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+}
 
-// ─── Ajustes de tamaño (cambia aquí si todavía necesitas reducir la letra) ────
+function cap(s: string): string {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : s;
+}
 
-const BODY_FONT_SIZE = 6.5;
-const HEAD_FONT_SIZE = 6.5;
-// Padding horizontal pequeño para que los horarios "16:00-18:00" no se partan
-const CELL_PADDING = { top: 2, bottom: 2, left: 1, right: 1 };
+function formatSlot(s: OficioScheduleSlot): string {
+  return `${cap(s.day)} De ${s.start} a ${s.end}`;
+}
+
+// ─── Layout ───────────────────────────────────────────────────────────────────
+
+const MARGIN_X = 20;           // mm
+const TOP = 40;                // inicio del contenido (debajo del encabezado)
+const LINE_H = 4.6;            // interlineado del texto, mm
+const BODY_SIZE = 9;           // pt
+const TABLE_SIZE = 7.5;        // pt  ← baja a 7 o 6.5 si el texto de la tabla aún no cabe
+
+/** Dibuja un párrafo justificado (la última línea queda alineada a la izquierda). */
+function drawJustified(
+  doc: jsPDF,
+  text: string,
+  x: number,
+  y: number,
+  width: number
+): number {
+  const lines: string[] = doc.splitTextToSize(text, width);
+  lines.forEach((line, i) => {
+    const isLast = i === lines.length - 1;
+    if (isLast || !line.includes(' ')) {
+      doc.text(line, x, y);
+    } else {
+      doc.text(line, x, y, { align: 'justify', maxWidth: width });
+    }
+    y += LINE_H;
+  });
+  return y;
+}
 
 // ─── Función principal ────────────────────────────────────────────────────────
 
-/**
- * Genera un PDF con el horario completo del docente al estilo del concentrado general.
- *
- * @param teacherName  Nombre del docente
- * @param contractType 'BASE' | 'INVITADO'
- * @param rows         Filas de asignaturas del docente
- * @param cycleName    Nombre del ciclo escolar (ej. "2026-1")
- */
-export function generateTeacherSchedulePDF(
-  teacherName: string,
-  contractType: string,
-  rows: TeacherScheduleRow[],
-  cycleName: string = ''
-): jsPDF {
-  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'letter' });
+export function generateOficioCargaAcademicaPDF(data: OficioData): jsPDF {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
+  const pageW = doc.internal.pageSize.getWidth();   // 215.9
+  const pageH = doc.internal.pageSize.getHeight();  // 279.4
+  const contentW = pageW - MARGIN_X * 2;
+  const centerX = pageW / 2;
 
-  const DAYS: DayKey[] = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+  // Alto reservado al pie (imagen de greca + 2 líneas de dirección/contacto)
+  let footerImgH = 0;
+  let footerImgW = 0;
+  if (data.footerImage) {
+    const p = doc.getImageProperties(data.footerImage);
+    footerImgW = pageW - 20;
+    footerImgH = (p.height / p.width) * footerImgW;
+  }
+  const footerTextH = 11;                                 // 2 líneas de texto + aire
+  const bottomReserve = footerImgH + footerTextH + 4;
+  const footerTop = pageH - bottomReserve;                // el contenido nunca pasa de aquí
+  const contentLimit = footerTop - 3;
 
-  // Ancho útil de la página (carta horizontal = 279.4 mm, menos márgenes de 10 mm)
-  const MARGIN = 10;
-  const pageWidth = doc.internal.pageSize.getWidth();
-  const contentWidth = pageWidth - MARGIN * 2; // ≈ 259.4 mm
-  const centerX = pageWidth / 2;
+  let y = TOP;
 
-  // ── Encabezado institucional ───────────────────────────────────────────────
-  doc.setFillColor(...COLORS.headerBg);
-  doc.rect(MARGIN, 8, contentWidth, 16, 'F');
+  const ensureSpace = (h: number) => {
+    if (y + h > contentLimit) {
+      doc.addPage();
+      y = TOP;
+    }
+  };
 
-  doc.setTextColor(...COLORS.headerText);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(13);
-  doc.text('CONCENTRADO DE CARGA ACADÉMICA', centerX, 15, { align: 'center' });
-
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'normal');
-  doc.text('BENEMÉRITA UNIVERSIDAD AUTÓNOMA DE PUEBLA', centerX, 21, { align: 'center' });
-
-  // ── Bloque de datos del docente ────────────────────────────────────────────
+  // ── Asunto y fecha ────────────────────────────────────────────────────────
   doc.setTextColor(0, 0, 0);
-  doc.setFillColor(...COLORS.groupBg);
-  doc.rect(MARGIN, 26, contentWidth, 10, 'F');
-  doc.setDrawColor(...COLORS.borderColor);
-  doc.rect(MARGIN, 26, contentWidth, 10, 'S');
-
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(9);
-  doc.text(`DOCENTE:`, 13, 32);
+  doc.setFontSize(BODY_SIZE + 0.5);
+  doc.text('ASUNTO: ASIGNACIÓN DE CARGA ACADÉMICA', pageW - MARGIN_X, y, { align: 'right' });
+  y += LINE_H + 2;
+
   doc.setFont('helvetica', 'normal');
-  doc.text(teacherName.toUpperCase(), 35, 32);
-
-  doc.setFont('helvetica', 'bold');
-  doc.text(`TIPO:`, 140, 32);
-  doc.setFont('helvetica', 'normal');
-  doc.text(contractType.toUpperCase(), 153, 32);
-
-  doc.setFont('helvetica', 'bold');
-  doc.text(`CICLO:`, 190, 32);
-  doc.setFont('helvetica', 'normal');
-  doc.text(cycleName, 204, 32);
-
-  // ── Calcular total de horas semanales del docente ─────────────────────────
-  const totalHoursAll = rows.reduce((acc, row) => {
-    const h = row.hoursPerWeek ?? calcHours(row.daySchedules);
-    return acc + h;
-  }, 0);
-
-  // ── Construir cuerpo de la tabla ───────────────────────────────────────────
-  // Columnas: Programa | Sede | Materia | Grupo | Lun | Mar | Mie | Jue | Vie | Sab | Hras/sem
-  const head = [
-    [
-      { content: 'PROGRAMA EDUCATIVO', styles: { halign: 'center' as const } },
-      { content: 'SEDE', styles: { halign: 'center' as const } },
-      { content: 'MATERIA', styles: { halign: 'center' as const } },
-      { content: 'GRUPO', styles: { halign: 'center' as const } },
-      { content: 'LUNES', styles: { halign: 'center' as const } },
-      { content: 'MARTES', styles: { halign: 'center' as const } },
-      { content: 'MIÉRCOLES', styles: { halign: 'center' as const } },
-      { content: 'JUEVES', styles: { halign: 'center' as const } },
-      { content: 'VIERNES', styles: { halign: 'center' as const } },
-      { content: 'SÁBADO', styles: { halign: 'center' as const } },
-      { content: 'HRS/SEM', styles: { halign: 'center' as const } },
-    ],
-  ];
-
-  const body: any[] = rows.map((row, idx) => {
-    const hrs = row.hoursPerWeek ?? calcHours(row.daySchedules);
-    return [
-      { content: row.programName, styles: { fillColor: idx % 2 === 0 ? COLORS.rowBg1 : COLORS.rowBg2 } },
-      { content: row.sede, styles: { halign: 'center', fillColor: idx % 2 === 0 ? COLORS.rowBg1 : COLORS.rowBg2 } },
-      { content: row.subjectName, styles: { fillColor: idx % 2 === 0 ? COLORS.rowBg1 : COLORS.rowBg2 } },
-      { content: row.groupName, styles: { halign: 'center', fillColor: idx % 2 === 0 ? COLORS.rowBg1 : COLORS.rowBg2 } },
-      ...DAYS.map(day => {
-        const d = row.daySchedules[day];
-        return {
-          content: d ? fmtRange(d.start, d.end) : '',
-          styles: {
-            halign: 'center',
-            fillColor: d
-              ? (idx % 2 === 0 ? [230, 245, 255] : [210, 235, 255])
-              : (idx % 2 === 0 ? COLORS.rowBg1 : COLORS.rowBg2),
-            textColor: d ? [0, 80, 160] : [160, 160, 160],
-            fontStyle: d ? 'bold' : 'normal',
-          } as any,
-        };
-      }),
-      {
-        content: `${hrs}h`,
-        styles: {
-          halign: 'center',
-          fontStyle: 'bold',
-          fillColor: COLORS.totalBg,
-          textColor: COLORS.totalText,
-        },
-      },
-    ];
+  doc.setFontSize(BODY_SIZE);
+  const city = data.city ?? 'Teziutlán, Pue.';
+  doc.text(`${city}, ${longDate(data.oficioDate ?? todayISO())}`, pageW - MARGIN_X, y, {
+    align: 'right',
   });
+  y += LINE_H * 2.5;
 
-  // Fila de total
-  body.push([
-    {
-      content: 'TOTAL HORAS SEMANALES',
-      colSpan: 10,
-      styles: {
-        halign: 'right',
-        fontStyle: 'bold',
-        fillColor: COLORS.headerBg,
-        textColor: COLORS.headerText,
-      },
-    },
-    {
-      content: `${totalHoursAll}h`,
-      styles: {
-        halign: 'center',
-        fontStyle: 'bold',
-        fillColor: [0, 120, 0],
-        textColor: [255, 255, 255],
-      },
-    },
+  // ── Destinatario ──────────────────────────────────────────────────────────
+  doc.setFont('helvetica', 'bold');
+  doc.text(data.teacherName.toUpperCase(), MARGIN_X, y);
+  y += LINE_H;
+  doc.setFont('helvetica', 'normal');
+  doc.text(data.contractLabel.toUpperCase(), MARGIN_X, y);
+  y += LINE_H;
+  doc.text(data.unitLabel.toUpperCase(), MARGIN_X, y);
+  y += LINE_H * 1.4;
+  doc.setFont('helvetica', 'bold');
+  doc.text('P R E S E N T E', MARGIN_X, y);
+  y += LINE_H * 2;
+
+  // ── Párrafo de apertura ───────────────────────────────────────────────────
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(BODY_SIZE - 0.5);
+  const intro =
+    `En virtud de reunir características académicas y profesionales específicas; ` +
+    `se le ha asignado el siguiente curso en la ${data.programName.toUpperCase()}, ` +
+    `que corresponde al periodo ${periodText(data.periodStart, data.periodEnd)}.`;
+  y = drawJustified(doc, intro, MARGIN_X, y, contentW);
+  y += LINE_H;
+
+  // ── Tabla de asignaturas ──────────────────────────────────────────────────
+  const body = data.subjects.map((s) => [
+    s.key,
+    s.name.toUpperCase(),
+    s.schedule.map(formatSlot).join('\n'),
+    s.semester,
   ]);
 
   autoTable(doc, {
-    startY: 38,
-    head,
+    startY: y,
+    head: [['CLAVE', 'ASIGNATURA', 'HORARIO Y DÍA', 'SEM']],
     body,
     theme: 'grid',
+    margin: { left: MARGIN_X, right: MARGIN_X, top: TOP, bottom: bottomReserve + 2 },
     styles: {
-      overflow: 'linebreak',
-      cellPadding: CELL_PADDING,
-      valign: 'middle',
-    },
-    headStyles: {
-      fillColor: COLORS.headerBg,
-      textColor: COLORS.headerText,
-      fontStyle: 'bold',
-      fontSize: HEAD_FONT_SIZE,
+      font: 'helvetica',
+      fontSize: TABLE_SIZE,
+      cellPadding: { top: 2.2, bottom: 2.2, left: 1.5, right: 1.5 },
       halign: 'center',
       valign: 'middle',
-      cellPadding: CELL_PADDING,
+      overflow: 'linebreak',
+      lineColor: [90, 90, 90],
+      lineWidth: 0.2,
+      textColor: [40, 40, 40],
     },
-    bodyStyles: {
-      fontSize: BODY_FONT_SIZE,
-      cellPadding: CELL_PADDING,
-      valign: 'middle',
+    headStyles: {
+      fillColor: [225, 225, 225],
+      textColor: [0, 0, 0],
+      fontStyle: 'bold',
+      fontSize: TABLE_SIZE + 0.5,
     },
-    // Suma = 258 mm (cabe en los 259.4 mm útiles de la hoja)
+    // Suma = contentW (175.9 mm)
     columnStyles: {
-      0: { cellWidth: 34 },  // Programa
-      1: { cellWidth: 18 },  // Sede
-      2: { cellWidth: 56 },  // Materia
-      3: { cellWidth: 14 },  // Grupo
-      4: { cellWidth: 20 },  // Lunes
-      5: { cellWidth: 20 },  // Martes
-      6: { cellWidth: 20 },  // Miércoles
-      7: { cellWidth: 20 },  // Jueves
-      8: { cellWidth: 20 },  // Viernes
-      9: { cellWidth: 20 },  // Sábado
-      10: { cellWidth: 16 }, // Hrs/sem
+      0: { cellWidth: 22 },
+      1: { cellWidth: 68 },
+      2: { cellWidth: 66 },
+      3: { cellWidth: contentW - 22 - 68 - 66 },
     },
-    margin: { left: MARGIN, right: MARGIN },
-    tableLineColor: COLORS.borderColor,
-    tableLineWidth: 0.1,
+    rowPageBreak: 'avoid',
   });
 
-  // ── Pie de página ──────────────────────────────────────────────────────────
-  const finalY = (doc as any).lastAutoTable.finalY + 6;
-  doc.setFontSize(7);
-  doc.setTextColor(120, 120, 120);
-  doc.text(
-    `Generado: ${new Date().toLocaleDateString('es-MX', { day: '2-digit', month: 'long', year: 'numeric' })}`,
-    MARGIN,
-    finalY
-  );
-  doc.text('Documento generado automáticamente por el sistema de gestión académica', centerX, finalY, {
-    align: 'center',
+  y = (doc as any).lastAutoTable.finalY + 8;
+
+  // ── Párrafo de cierre ─────────────────────────────────────────────────────
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(BODY_SIZE - 0.5);
+  const closing =
+    'Deseándole el mayor de los éxitos en el desempeño de esta tarea, aprovecho la oportunidad ' +
+    'para invitarle a que, en el ejercicio de sus funciones, ponga lo mejor de su esfuerzo y ' +
+    'dedicación al servicio de la Universidad Pedagógica Nacional Unidad 212 Teziutlán, siguiendo ' +
+    'las indicaciones institucionales, estableciendo comunicación permanente con su coordinador(a) ' +
+    'y apoyando en las diversas actividades que fortalecen la formación de nuestros alumnos, así ' +
+    'como la vida institucional de nuestra universidad.';
+  const closingLines: string[] = doc.splitTextToSize(closing, contentW);
+  ensureSpace(closingLines.length * LINE_H + 4);
+  y = drawJustified(doc, closing, MARGIN_X, y, contentW);
+  y += LINE_H * 2;
+
+  // ── Bloque de firma (medido antes de dibujar) ─────────────────────────────
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(BODY_SIZE - 0.5);
+  const cargoLines: string[] = doc.splitTextToSize(data.director.title.toUpperCase(), contentW - 10);
+  const SIGN_GAP = 12;                                    // espacio para la firma
+  const signBlockH =
+    LINE_H * 2 + 2 +            // ATENTAMENTE + lema
+    SIGN_GAP +
+    LINE_H +                    // nombre
+    cargoLines.length * LINE_H; // cargo (1, 2 o más líneas)
+
+  // Si no cabe antes del pie, el bloque completo pasa a otra página
+  ensureSpace(signBlockH);
+
+  doc.setFontSize(BODY_SIZE);
+  doc.text('ATENTAMENTE', centerX, y, { align: 'center' });
+  y += LINE_H;
+  doc.text('"EDUCAR PARA TRANSFORMAR"', centerX, y, { align: 'center' });
+  y += LINE_H + 2 + SIGN_GAP;
+
+  doc.setFontSize(BODY_SIZE - 0.5);
+  doc.text(data.director.name.toUpperCase(), centerX, y, { align: 'center' });
+  y += LINE_H;
+  cargoLines.forEach((line) => {
+    doc.text(line, centerX, y, { align: 'center' });
+    y += LINE_H;
   });
+
+  // ── Encabezado y pie en TODAS las páginas ─────────────────────────────────
+  const totalPages = doc.getNumberOfPages();
+  const address =
+    data.addressLine ??
+    'Calle Principal Ignacio Zaragoza s/n, Col. Maxtaco, Teziutlán, Pue. C.P 73820';
+  const contact =
+    data.contactLine ??
+    'Tel. (231) 31 2 23 02 ext 101   upn212@seppue.gob.mx / sep.puebla.gob.mx';
+
+  for (let i = 1; i <= totalPages; i++) {
+    doc.setPage(i);
+
+    if (data.headerImage) {
+      const p = doc.getImageProperties(data.headerImage);
+      const w = pageW - 30;
+      const h = (p.height / p.width) * w;
+      doc.addImage(data.headerImage, 'PNG', 15, 8, w, Math.min(h, TOP - 12));
+    }
+
+    // Texto del pie, siempre en la zona reservada (nunca choca con la firma)
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(40, 40, 40);
+    const fy = footerTop + 4;
+    doc.text(address, centerX, fy, { align: 'center', maxWidth: contentW });
+    doc.text(contact, centerX, fy + 4, { align: 'center', maxWidth: contentW });
+
+    if (data.footerImage) {
+      doc.addImage(data.footerImage, 'PNG', 10, pageH - footerImgH - 4, footerImgW, footerImgH);
+    }
+  }
 
   return doc;
 }
 
-/**
- * Descarga el PDF directamente en el navegador.
- */
-export function downloadTeacherSchedulePDF(
-  teacherName: string,
-  contractType: string,
-  rows: TeacherScheduleRow[],
-  cycleName: string = ''
-): void {
-  const doc = generateTeacherSchedulePDF(teacherName, contractType, rows, cycleName);
-  const safeName = teacherName.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s]/g, '').replace(/\s+/g, '_');
-  doc.save(`horario_${safeName}_${cycleName || 'ciclo'}.pdf`);
+/** Descarga el oficio directamente en el navegador. */
+export function downloadOficioCargaAcademicaPDF(data: OficioData): void {
+  const doc = generateOficioCargaAcademicaPDF(data);
+  const safe = data.teacherName
+    .replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s]/g, '')
+    .replace(/\s+/g, '_');
+  doc.save(`oficio_carga_${safe}.pdf`);
 }
