@@ -45,7 +45,10 @@ interface Layout {
 
 const LAYOUTS: Layout[] = [
   { fontSize: 9,   pad: 2.5, tableGap: 3.5, afterTable: 8, sigGap: 15, nameOffset: 21, cargo1: 26, cargo2: 31 }, // original
-  { fontSize: 8,   pad: 1.8, tableGap: 3,   afterTable: 6, sigGap: 10, nameOffset: 18, cargo1: 23, cargo2: 28 },
+  { fontSize: 9,   pad: 2.5, tableGap: 3.5, afterTable: 8, sigGap: 11, nameOffset: 19, cargo1: 24, cargo2: 28 },
+  { fontSize: 9,   pad: 2.2, tableGap: 3,   afterTable: 7, sigGap: 9,  nameOffset: 18, cargo1: 23, cargo2: 27 },
+  { fontSize: 8.5, pad: 1.8, tableGap: 3,   afterTable: 6, sigGap: 8,  nameOffset: 17, cargo1: 22, cargo2: 26 },
+  { fontSize: 8,   pad: 1.5, tableGap: 2.5, afterTable: 5, sigGap: 7,  nameOffset: 16, cargo1: 21, cargo2: 25 },
   { fontSize: 7.5, pad: 1.4, tableGap: 2.5, afterTable: 5, sigGap: 8,  nameOffset: 16, cargo1: 21, cargo2: 26 },
   { fontSize: 7,   pad: 1.1, tableGap: 2,   afterTable: 4, sigGap: 6,  nameOffset: 14, cargo1: 19, cargo2: 24 },
   { fontSize: 6.5, pad: 0.9, tableGap: 2,   afterTable: 3, sigGap: 5,  nameOffset: 13, cargo1: 18, cargo2: 23 },

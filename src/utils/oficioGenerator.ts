@@ -15,7 +15,7 @@ const isOddSemesterGroup = (groupName: string): boolean => {
 const SIGNATURE_MIN_Y = 190;
 // Límite inferior: la ÚLTIMA línea del cargo del director no debe pasar de aquí.
 // La dirección del membrete (fondo) empieza a ~245 mm. Si todavía se encima, baja este valor.
-const FOOTER_SAFE_Y = 241;
+const FOOTER_SAFE_Y = 244;
 
 // Hoja carta: 215.9 x 279.4 mm
 const PAGE_WIDTH = 215.9;
@@ -95,7 +95,13 @@ interface Layout {
 
 const LAYOUTS: Layout[] = [
   { fontSize: 9,   pad: 3,   headGap: 8, introGap: 3,   afterTable: 10, closeGap: 6, nameOffset: 24, cargo1: 29, cargo2: 33 }, // original
-  { fontSize: 8,   pad: 2,   headGap: 7, introGap: 3,   afterTable: 7,  closeGap: 5, nameOffset: 20, cargo1: 25, cargo2: 29 },
+  // 1-3: letra 9 igual que el original; solo se recortan espacios y un poco de relleno
+  { fontSize: 9,   pad: 3,   headGap: 7, introGap: 3,   afterTable: 8,  closeGap: 5, nameOffset: 20, cargo1: 25, cargo2: 29 },
+  { fontSize: 9,   pad: 2.5, headGap: 7, introGap: 3,   afterTable: 8,  closeGap: 5, nameOffset: 20, cargo1: 25, cargo2: 29 },
+  { fontSize: 9,   pad: 2,   headGap: 7, introGap: 3,   afterTable: 7,  closeGap: 4, nameOffset: 19, cargo1: 24, cargo2: 28 },
+  // 4 en adelante: la letra de la tabla empieza a bajar
+  { fontSize: 8.5, pad: 1.8, headGap: 6, introGap: 3,   afterTable: 6,  closeGap: 4, nameOffset: 18, cargo1: 23, cargo2: 27 },
+  { fontSize: 8,   pad: 1.5, headGap: 6, introGap: 2,   afterTable: 5,  closeGap: 4, nameOffset: 17, cargo1: 22, cargo2: 26 },
   { fontSize: 7.5, pad: 1.5, headGap: 6, introGap: 2,   afterTable: 5,  closeGap: 4, nameOffset: 17, cargo1: 22, cargo2: 26 },
   { fontSize: 7,   pad: 1.2, headGap: 5, introGap: 2,   afterTable: 4,  closeGap: 3, nameOffset: 15, cargo1: 20, cargo2: 24 },
   { fontSize: 6.5, pad: 1,   headGap: 4, introGap: 1.5, afterTable: 3,  closeGap: 3, nameOffset: 14, cargo1: 19, cargo2: 23 },
