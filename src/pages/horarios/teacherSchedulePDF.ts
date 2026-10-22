@@ -305,10 +305,10 @@ export function generateOficioCargaAcademicaPDF(data: OficioData): jsPDF {
       const p = doc.getImageProperties(data.watermarkImage);
       const w = pageW * 0.8;
       const h = (p.height / p.width) * w;
-      doc.saveGState();
+      doc.saveGraphicsState();
       doc.setGState(new (doc as any).GState({ opacity: 0.07 }));
       doc.addImage(data.watermarkImage, 'PNG', (pageW - w) / 2, (pageH - h) / 2, w, h);
-      doc.restoreGState();
+      doc.restoreGraphicsState();
     }
 
     if (data.headerImage) {
