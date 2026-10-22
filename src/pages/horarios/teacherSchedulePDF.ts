@@ -1,10 +1,12 @@
 // src/utils/oficioCargaAcademicaPDF.ts
 // Genera el oficio "ASIGNACIÓN DE CARGA ACADÉMICA" (hoja carta vertical).
 //
-// Diferencias clave frente a un layout con posiciones fijas:
-//  - La firma y el pie se colocan según donde termina el contenido (no con números fijos).
-//  - El cargo del director se parte en líneas medidas, así nunca se encima con la dirección.
-//  - Si la firma no cabe antes del pie, pasa automáticamente a una página nueva.
+// Diseño:
+//  - Si pasas `letterheadImage` (membrete a página completa con logos, marca de agua,
+//    dirección y greca), se dibuja como FONDO de cada página y el contenido se detiene
+//    antes de la zona de abajo (`letterheadBottomMm`), para no encimarse con el texto del fondo.
+//  - Si no pasas membrete, dibuja encabezado/pie con las imágenes sueltas.
+//  - La firma se mide antes de dibujarla; si no cabe, pasa completa a otra página.
 
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -54,16 +56,25 @@ export interface OficioData {
     /** Cargo completo; se parte solo en las líneas necesarias */
     title: string;
   };
-  /** Línea(s) del pie: dirección. */
-  addressLine?: string;
-  /** Línea del pie: teléfono y correo. */
-  contactLine?: string;
-  /** Imagen de encabezado (data URL PNG/JPEG) con los logos. Opcional. */
+
+  // ── Opción A: membrete completo como fondo (recomendada) ──────────────────
+  /** Imagen de página completa (data URL PNG/JPEG) con logos, marca de agua, dirección y greca. */
+  letterheadImage?: string;
+  /**
+   * Alto (mm) de la zona inferior del membrete que el contenido NO debe tocar
+   * (donde está la dirección y la greca). Por defecto 36 mm.
+   * Si todavía se encima, súbelo (38, 40...); si sobra espacio, bájalo.
+   */
+  letterheadBottomMm?: number;
+  /** Donde empieza el contenido (mm desde arriba), debajo de los logos. Por defecto 38. */
+  letterheadTopMm?: number;
+
+  // ── Opción B: piezas sueltas (se usan solo si no hay letterheadImage) ─────
   headerImage?: string;
-  /** Imagen de pie (data URL PNG/JPEG) con la greca. Opcional. */
   footerImage?: string;
-  /** Marca de agua de fondo (data URL PNG/JPEG). Opcional; se dibuja muy tenue. */
   watermarkImage?: string;
+  addressLine?: string;
+  contactLine?: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -105,15 +116,27 @@ function formatSlot(s: OficioScheduleSlot): string {
   return `${cap(s.day)} De ${s.start} a ${s.end}`;
 }
 
-// ─── Layout ───────────────────────────────────────────────────────────────────
+/** Detecta PNG/JPEG a partir del data URL. */
+function imgFormat(dataUrl: string): 'PNG' | 'JPEG' {
+  return /^data:image\/jpe?g/i.test(dataUrl) ? 'JPEG' : 'PNG';
+}
 
-const MARGIN_X = 20;           // mm
-const TOP = 40;                // inicio del contenido (debajo del encabezado)
-const LINE_H = 4.6;            // interlineado del texto, mm
+// ─── Layout (todo en mm / pt) ─────────────────────────────────────────────────
+
+const MARGIN_X = 20;
+const LINE_H = 4.4;            // interlineado del texto
 const BODY_SIZE = 9;           // pt
 const TABLE_SIZE = 7;          // pt  ← baja a 6.5 si el texto de la tabla aún no cabe
 
-/** Dibuja un párrafo justificado (la última línea queda alineada a la izquierda). */
+// Espacios verticales (bájalos para ganar lugar, súbelos si se ve muy apretado)
+const GAP_AFTER_DATE = 2;      // entre la fecha y el destinatario (× LINE_H)
+const GAP_BEFORE_INTRO = 1.4;  // entre "P R E S E N T E" y el párrafo (× LINE_H)
+const GAP_BEFORE_TABLE = 0.6;  // entre el párrafo y la tabla (× LINE_H)
+const GAP_AFTER_TABLE = 5;     // mm entre la tabla y el párrafo de cierre
+const GAP_BEFORE_SIGN = 1.4;   // entre el cierre y ATENTAMENTE (× LINE_H)
+const SIGN_GAP = 9;            // mm de espacio para la firma entre el lema y el nombre
+
+/** Dibuja un párrafo justificado (la última línea queda a la izquierda). */
 function drawJustified(
   doc: jsPDF,
   text: string,
@@ -143,24 +166,84 @@ export function generateOficioCargaAcademicaPDF(data: OficioData): jsPDF {
   const contentW = pageW - MARGIN_X * 2;
   const centerX = pageW / 2;
 
-  // Alto reservado al pie (imagen de greca + 2 líneas de dirección/contacto)
+  const hasLetterhead = !!data.letterheadImage;
+  const TOP = hasLetterhead ? data.letterheadTopMm ?? 38 : 40;
+
+  // Zona inferior que el contenido nunca debe invadir
   let footerImgH = 0;
   let footerImgW = 0;
-  if (data.footerImage) {
+  if (!hasLetterhead && data.footerImage) {
     const p = doc.getImageProperties(data.footerImage);
     footerImgW = pageW - 20;
     footerImgH = (p.height / p.width) * footerImgW;
   }
-  const footerTextH = 11;                                 // 2 líneas de texto + aire
-  const bottomReserve = footerImgH + footerTextH + 4;
-  const footerTop = pageH - bottomReserve;                // el contenido nunca pasa de aquí
-  const contentLimit = footerTop - 3;
+  const bottomReserve = hasLetterhead
+    ? data.letterheadBottomMm ?? 36
+    : footerImgH + 11 + 4;
+  const footerTop = pageH - bottomReserve;
+  const contentLimit = footerTop - 2;
+
+  const address =
+    data.addressLine ??
+    'Calle Principal Ignacio Zaragoza s/n, Col. Maxtaco, Teziutlán, Pue. C.P 73820';
+  const contact =
+    data.contactLine ??
+    'Tel. (231) 31 2 23 02 ext 101   upn212@seppue.gob.mx / sep.puebla.gob.mx';
+
+  /** Fondo / encabezado / pie de la página ACTUAL. Se llama al crear cada página. */
+  const drawDecor = () => {
+    if (hasLetterhead) {
+      doc.addImage(data.letterheadImage!, imgFormat(data.letterheadImage!), 0, 0, pageW, pageH);
+      return;
+    }
+    if (data.watermarkImage) {
+      const p = doc.getImageProperties(data.watermarkImage);
+      const w = pageW * 0.8;
+      const h = (p.height / p.width) * w;
+      doc.saveGraphicsState();
+      doc.setGState(new (doc as any).GState({ opacity: 0.07 }));
+      doc.addImage(
+        data.watermarkImage,
+        imgFormat(data.watermarkImage),
+        (pageW - w) / 2,
+        (pageH - h) / 2,
+        w,
+        h
+      );
+      doc.restoreGraphicsState();
+    }
+    if (data.headerImage) {
+      const p = doc.getImageProperties(data.headerImage);
+      const w = pageW - 30;
+      const h = (p.height / p.width) * w;
+      doc.addImage(data.headerImage, imgFormat(data.headerImage), 15, 8, w, Math.min(h, TOP - 12));
+    }
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(40, 40, 40);
+    doc.text(address, centerX, footerTop + 4, { align: 'center', maxWidth: contentW });
+    doc.text(contact, centerX, footerTop + 8, { align: 'center', maxWidth: contentW });
+    if (data.footerImage) {
+      doc.addImage(
+        data.footerImage,
+        imgFormat(data.footerImage),
+        10,
+        pageH - footerImgH - 4,
+        footerImgW,
+        footerImgH
+      );
+    }
+  };
+
+  // Página 1
+  drawDecor();
 
   let y = TOP;
 
   const ensureSpace = (h: number) => {
     if (y + h > contentLimit) {
       doc.addPage();
+      drawDecor();
       y = TOP;
     }
   };
@@ -170,7 +253,7 @@ export function generateOficioCargaAcademicaPDF(data: OficioData): jsPDF {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(BODY_SIZE + 0.5);
   doc.text('ASUNTO: ASIGNACIÓN DE CARGA ACADÉMICA', pageW - MARGIN_X, y, { align: 'right' });
-  y += LINE_H + 2;
+  y += LINE_H + 1.5;
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(BODY_SIZE);
@@ -178,7 +261,7 @@ export function generateOficioCargaAcademicaPDF(data: OficioData): jsPDF {
   doc.text(`${city}, ${longDate(data.oficioDate ?? todayISO())}`, pageW - MARGIN_X, y, {
     align: 'right',
   });
-  y += LINE_H * 2.5;
+  y += LINE_H * GAP_AFTER_DATE;
 
   // ── Destinatario ──────────────────────────────────────────────────────────
   doc.setFont('helvetica', 'bold');
@@ -188,10 +271,10 @@ export function generateOficioCargaAcademicaPDF(data: OficioData): jsPDF {
   doc.text(data.contractLabel.toUpperCase(), MARGIN_X, y);
   y += LINE_H;
   doc.text(data.unitLabel.toUpperCase(), MARGIN_X, y);
-  y += LINE_H * 1.4;
+  y += LINE_H;
   doc.setFont('helvetica', 'bold');
   doc.text('P R E S E N T E', MARGIN_X, y);
-  y += LINE_H * 2;
+  y += LINE_H * GAP_BEFORE_INTRO;
 
   // ── Párrafo de apertura ───────────────────────────────────────────────────
   doc.setFont('helvetica', 'normal');
@@ -201,7 +284,7 @@ export function generateOficioCargaAcademicaPDF(data: OficioData): jsPDF {
     `se le ha asignado el siguiente curso en la ${data.programName.toUpperCase()}, ` +
     `que corresponde al periodo ${periodText(data.periodStart, data.periodEnd)}.`;
   y = drawJustified(doc, intro, MARGIN_X, y, contentW);
-  y += LINE_H;
+  y += LINE_H * GAP_BEFORE_TABLE;
 
   // ── Tabla de asignaturas ──────────────────────────────────────────────────
   const body = data.subjects.map((s) => [
@@ -242,9 +325,13 @@ export function generateOficioCargaAcademicaPDF(data: OficioData): jsPDF {
       3: { cellWidth: contentW - 22 - 68 - 66 },
     },
     rowPageBreak: 'avoid',
+    // Si la tabla salta de página, la página nueva también lleva el fondo
+    didAddPage: () => {
+      drawDecor();
+    },
   });
 
-  y = (doc as any).lastAutoTable.finalY + 8;
+  y = (doc as any).lastAutoTable.finalY + GAP_AFTER_TABLE;
 
   // ── Párrafo de cierre ─────────────────────────────────────────────────────
   doc.setFont('helvetica', 'normal');
@@ -259,20 +346,19 @@ export function generateOficioCargaAcademicaPDF(data: OficioData): jsPDF {
   const closingLines: string[] = doc.splitTextToSize(closing, contentW);
   ensureSpace(closingLines.length * LINE_H + 4);
   y = drawJustified(doc, closing, MARGIN_X, y, contentW);
-  y += LINE_H * 2;
+  y += LINE_H * GAP_BEFORE_SIGN;
 
-  // ── Bloque de firma (medido antes de dibujar) ─────────────────────────────
+  // ── Bloque de firma (medido antes de dibujarlo) ───────────────────────────
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(BODY_SIZE - 0.5);
   const cargoLines: string[] = doc.splitTextToSize(data.director.title.toUpperCase(), contentW - 10);
-  const SIGN_GAP = 10;                                    // espacio para la firma
   const signBlockH =
     LINE_H * 2 + 2 +            // ATENTAMENTE + lema
     SIGN_GAP +
     LINE_H +                    // nombre
     cargoLines.length * LINE_H; // cargo (1, 2 o más líneas)
 
-  // Si no cabe antes del pie, el bloque completo pasa a otra página
+  // Si no cabe antes de la zona del pie/fondo, el bloque completo pasa a otra página
   ensureSpace(signBlockH);
 
   doc.setFontSize(BODY_SIZE);
@@ -288,48 +374,6 @@ export function generateOficioCargaAcademicaPDF(data: OficioData): jsPDF {
     doc.text(line, centerX, y, { align: 'center' });
     y += LINE_H;
   });
-
-  // ── Encabezado y pie en TODAS las páginas ─────────────────────────────────
-  const totalPages = doc.getNumberOfPages();
-  const address =
-    data.addressLine ??
-    'Calle Principal Ignacio Zaragoza s/n, Col. Maxtaco, Teziutlán, Pue. C.P 73820';
-  const contact =
-    data.contactLine ??
-    'Tel. (231) 31 2 23 02 ext 101   upn212@seppue.gob.mx / sep.puebla.gob.mx';
-
-  for (let i = 1; i <= totalPages; i++) {
-    doc.setPage(i);
-
-    if (data.watermarkImage) {
-      const p = doc.getImageProperties(data.watermarkImage);
-      const w = pageW * 0.8;
-      const h = (p.height / p.width) * w;
-      doc.saveGraphicsState();
-      doc.setGState(new (doc as any).GState({ opacity: 0.07 }));
-      doc.addImage(data.watermarkImage, 'PNG', (pageW - w) / 2, (pageH - h) / 2, w, h);
-      doc.restoreGraphicsState();
-    }
-
-    if (data.headerImage) {
-      const p = doc.getImageProperties(data.headerImage);
-      const w = pageW - 30;
-      const h = (p.height / p.width) * w;
-      doc.addImage(data.headerImage, 'PNG', 15, 8, w, Math.min(h, TOP - 12));
-    }
-
-    // Texto del pie, siempre en la zona reservada (nunca choca con la firma)
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
-    doc.setTextColor(40, 40, 40);
-    const fy = footerTop + 4;
-    doc.text(address, centerX, fy, { align: 'center', maxWidth: contentW });
-    doc.text(contact, centerX, fy + 4, { align: 'center', maxWidth: contentW });
-
-    if (data.footerImage) {
-      doc.addImage(data.footerImage, 'PNG', 10, pageH - footerImgH - 4, footerImgW, footerImgH);
-    }
-  }
 
   return doc;
 }
