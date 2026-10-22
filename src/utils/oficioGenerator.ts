@@ -15,17 +15,23 @@ const isOddSemesterGroup = (groupName: string): boolean => {
 const SIGNATURE_MIN_Y = 190;
 // Límite inferior: la ÚLTIMA línea del cargo del director no debe pasar de aquí.
 // La dirección del membrete (fondo) empieza a ~245 mm. Si todavía se encima, baja este valor.
-const FOOTER_SAFE_Y = 244;
+const FOOTER_SAFE_Y = 242;
 
 // Hoja carta: 215.9 x 279.4 mm
 const PAGE_WIDTH = 215.9;
 const PAGE_HEIGHT = 279.4;
 
 // Ajusta estos valores para estirar/encoger el membrete
-const BG_WIDTH = PAGE_WIDTH;     // ancho completo de la hoja
-const BG_HEIGHT = PAGE_HEIGHT;   // alto completo de la hoja (estira verticalmente)
-const BG_X = 0;
-const BG_Y = 0;
+// BG_SCALE: 1 = membrete a hoja completa; 0.97 = 3% más chico (se ve completo, con un
+// pequeño margen blanco alrededor). Baja a 0.95 si todavía se ve cortado.
+const BG_SCALE = 0.97;
+// BG_ANCHOR_Y: dónde queda el membrete reducido en vertical.
+//   0 = pegado arriba, 0.5 = centrado, 1 = pegado abajo.
+const BG_ANCHOR_Y = 0.5;
+const BG_WIDTH = PAGE_WIDTH * BG_SCALE;
+const BG_HEIGHT = PAGE_HEIGHT * BG_SCALE;
+const BG_X = (PAGE_WIDTH - BG_WIDTH) / 2;
+const BG_Y = (PAGE_HEIGHT - BG_HEIGHT) * BG_ANCHOR_Y;
 
 const addBackgroundImage = (doc: jsPDF, bgImage: string) => {
   doc.addImage(bgImage, 'JPEG', BG_X, BG_Y, BG_WIDTH, BG_HEIGHT);
