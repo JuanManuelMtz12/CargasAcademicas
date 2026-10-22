@@ -62,6 +62,8 @@ export interface OficioData {
   headerImage?: string;
   /** Imagen de pie (data URL PNG/JPEG) con la greca. Opcional. */
   footerImage?: string;
+  /** Marca de agua de fondo (data URL PNG/JPEG). Opcional; se dibuja muy tenue. */
+  watermarkImage?: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -298,6 +300,16 @@ export function generateOficioCargaAcademicaPDF(data: OficioData): jsPDF {
 
   for (let i = 1; i <= totalPages; i++) {
     doc.setPage(i);
+
+    if (data.watermarkImage) {
+      const p = doc.getImageProperties(data.watermarkImage);
+      const w = pageW * 0.8;
+      const h = (p.height / p.width) * w;
+      doc.saveGState();
+      doc.setGState(new (doc as any).GState({ opacity: 0.07 }));
+      doc.addImage(data.watermarkImage, 'PNG', (pageW - w) / 2, (pageH - h) / 2, w, h);
+      doc.restoreGState();
+    }
 
     if (data.headerImage) {
       const p = doc.getImageProperties(data.headerImage);
