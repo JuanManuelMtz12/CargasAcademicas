@@ -111,7 +111,7 @@ const MARGIN_X = 20;           // mm
 const TOP = 40;                // inicio del contenido (debajo del encabezado)
 const LINE_H = 4.6;            // interlineado del texto, mm
 const BODY_SIZE = 9;           // pt
-const TABLE_SIZE = 7.5;        // pt  ← baja a 7 o 6.5 si el texto de la tabla aún no cabe
+const TABLE_SIZE = 7;          // pt  ← baja a 6.5 si el texto de la tabla aún no cabe
 
 /** Dibuja un párrafo justificado (la última línea queda alineada a la izquierda). */
 function drawJustified(
@@ -220,7 +220,7 @@ export function generateOficioCargaAcademicaPDF(data: OficioData): jsPDF {
     styles: {
       font: 'helvetica',
       fontSize: TABLE_SIZE,
-      cellPadding: { top: 2.2, bottom: 2.2, left: 1.5, right: 1.5 },
+      cellPadding: { top: 1.3, bottom: 1.3, left: 1.5, right: 1.5 },
       halign: 'center',
       valign: 'middle',
       overflow: 'linebreak',
@@ -265,7 +265,7 @@ export function generateOficioCargaAcademicaPDF(data: OficioData): jsPDF {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(BODY_SIZE - 0.5);
   const cargoLines: string[] = doc.splitTextToSize(data.director.title.toUpperCase(), contentW - 10);
-  const SIGN_GAP = 12;                                    // espacio para la firma
+  const SIGN_GAP = 10;                                    // espacio para la firma
   const signBlockH =
     LINE_H * 2 + 2 +            // ATENTAMENTE + lema
     SIGN_GAP +
