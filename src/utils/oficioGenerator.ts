@@ -11,13 +11,11 @@ const isOddSemesterGroup = (groupName: string): boolean => {
   return ODD_SEMESTERS.includes(groupName.charAt(0));
 };
 
-// ── Límite de filas para quedarse en una sola hoja ────────────────────────
-const MAX_ROWS_SINGLE_PAGE = 6;
-
 // Y mínima para la firma cuando todo cabe en página 1
 const SIGNATURE_MIN_Y = 190;
-// Límite inferior seguro antes del pie de página
-const FOOTER_SAFE_Y = 242;
+// Límite inferior: la ÚLTIMA línea del cargo del director no debe pasar de aquí.
+// La dirección del membrete (fondo) empieza a ~245 mm. Si todavía se encima, baja este valor.
+const FOOTER_SAFE_Y = 241;
 
 // Hoja carta: 215.9 x 279.4 mm
 const PAGE_WIDTH = 215.9;
@@ -68,12 +66,48 @@ const loadImageAsBase64 = async (url: string): Promise<string> => {
   });
 };
 
+// ════════════════════════════════════════════════════════════════════════════
+// NIVELES DE COMPACTACIÓN
+// ════════════════════════════════════════════════════════════════════════════
+// El oficio se prueba en una hoja de borrador con cada nivel, de arriba hacia abajo.
+// Se usa el PRIMERO en el que todo cabe en una hoja y la firma termina antes de
+// FOOTER_SAFE_Y. El nivel 0 es tu formato original.
+//
+//  fontSize   tamaño de letra de la tabla (pt)
+//  pad        relleno interno de cada celda (mm)
+//  headGap    espacio después de "P R E S E N T E" (mm)
+//  introGap   espacio después del párrafo de apertura (mm)
+//  afterTable espacio entre la tabla y el párrafo de cierre (mm)
+//  closeGap   espacio entre el cierre y ATENTAMENTE (mm)
+//  nameOffset distancia de ATENTAMENTE al nombre del director (mm) = espacio de firma
+//  cargo1/2   distancia de ATENTAMENTE a las dos líneas del cargo (mm)
+interface Layout {
+  fontSize: number;
+  pad: number;
+  headGap: number;
+  introGap: number;
+  afterTable: number;
+  closeGap: number;
+  nameOffset: number;
+  cargo1: number;
+  cargo2: number;
+}
+
+const LAYOUTS: Layout[] = [
+  { fontSize: 9,   pad: 3,   headGap: 8, introGap: 3,   afterTable: 10, closeGap: 6, nameOffset: 24, cargo1: 29, cargo2: 33 }, // original
+  { fontSize: 8,   pad: 2,   headGap: 7, introGap: 3,   afterTable: 7,  closeGap: 5, nameOffset: 20, cargo1: 25, cargo2: 29 },
+  { fontSize: 7.5, pad: 1.5, headGap: 6, introGap: 2,   afterTable: 5,  closeGap: 4, nameOffset: 17, cargo1: 22, cargo2: 26 },
+  { fontSize: 7,   pad: 1.2, headGap: 5, introGap: 2,   afterTable: 4,  closeGap: 3, nameOffset: 15, cargo1: 20, cargo2: 24 },
+  { fontSize: 6.5, pad: 1,   headGap: 4, introGap: 1.5, afterTable: 3,  closeGap: 3, nameOffset: 14, cargo1: 19, cargo2: 23 },
+];
+
 // ── Dibuja encabezado (asunto + fecha + destinatario) ─────────────────────
 const drawHeader = (
   doc: jsPDF,
   teacherName: string,
   personalType: string,
-  date: string
+  date: string,
+  headGap: number = 8
 ) => {
   doc.setFontSize(11); doc.setFont('helvetica', 'bold');
   doc.text('ASUNTO: ASIGNACIÓN DE CARGA ACADÉMICA', 195, 35, { align: 'right' });
@@ -87,7 +121,7 @@ const drawHeader = (
   doc.text(personalType, 25, y); y += 5;
   doc.text('DE LA UPN-212 TEZIUTLÁN', 25, y); y += 5;
   doc.setFont('helvetica', 'bold');
-  doc.text('P R E S E N T E', 25, y); y += 8;
+  doc.text('P R E S E N T E', 25, y); y += headGap;
   return y;
 };
 
@@ -96,22 +130,28 @@ const drawIntroText = (
   doc: jsPDF,
   y: number,
   licenciaturaName: string,
-  periodoText: string
+  periodoText: string,
+  introGap: number = 3
 ): number => {
   doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
   const mainText = `En virtud de reunir características académicas y profesionales específicas; se le ha asignado el siguiente curso en la ${licenciaturaName}, que corresponde al periodo ${periodoText}.`;
   const split = doc.splitTextToSize(mainText, 165);
   doc.text(split, 25, y, { align: 'justify', maxWidth: 165 });
-  return y + split.length * 5 + 3;
+  return y + split.length * 5 + introGap;
 };
 
-// ── Dibuja el cierre + firma ───────────────────────────────────────────────
-const drawClosingAndSignature = (doc: jsPDF, y: number, forcedMinY = false) => {
+// ── Dibuja el cierre + firma. Devuelve la Y de la última línea del cargo ──
+const drawClosingAndSignature = (
+  doc: jsPDF,
+  y: number,
+  forcedMinY = false,
+  layout: Layout = LAYOUTS[0]
+): number => {
   const closingText = 'Deseándole el mayor de los éxitos en el desempeño de esta tarea, aprovecho la oportunidad para invitarle a que, en el ejercicio de sus funciones, ponga lo mejor de su esfuerzo y dedicación al servicio de la Universidad Pedagógica Nacional Unidad 212 Teziutlán, siguiendo las indicaciones institucionales, estableciendo comunicación permanente con su coordinador(a) y apoyando en las diversas actividades que fortalecen la formación de nuestros alumnos, así como la vida institucional de nuestra universidad.';
   doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
   const split = doc.splitTextToSize(closingText, 165);
   doc.text(split, 25, y, { align: 'justify', maxWidth: 165 });
-  y += split.length * 5 + 6;
+  y += split.length * 5 + layout.closeGap;
 
   // En página 1 usar Math.max para que la firma no suba encima del contenido
   const signatureY = forcedMinY ? Math.max(y, SIGNATURE_MIN_Y) : y;
@@ -119,17 +159,97 @@ const drawClosingAndSignature = (doc: jsPDF, y: number, forcedMinY = false) => {
   doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
   doc.text('ATENTAMENTE', 105, signatureY, { align: 'center' });
   doc.text('"EDUCAR PARA TRANSFORMAR"', 105, signatureY + 6, { align: 'center' });
-  doc.text('C. JUAN IGNACIO HERNÁNDEZ VÁZQUEZ', 105, signatureY + 24, { align: 'center' });
+  doc.text('C. JUAN IGNACIO HERNÁNDEZ VÁZQUEZ', 105, signatureY + layout.nameOffset, { align: 'center' });
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
-  doc.text('DIRECTOR DE LA UNIDAD UPN 212 TEZIUTLÁN DE LA UNIVERSIDAD', 105, signatureY + 29, { align: 'center' });
-  doc.text('PEDAGÓGICA NACIONAL', 105, signatureY + 33, { align: 'center' });
+  doc.text('DIRECTOR DE LA UNIDAD UPN 212 TEZIUTLÁN DE LA UNIVERSIDAD', 105, signatureY + layout.cargo1, { align: 'center' });
+  doc.text('PEDAGÓGICA NACIONAL', 105, signatureY + layout.cargo2, { align: 'center' });
+
+  return signatureY + layout.cargo2;
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// RENDER COMPARTIDO (regular y LEIP)
+// ════════════════════════════════════════════════════════════════════════════
+
+interface TableSpec {
+  head: string[];
+  body: string[][];
+  columnStyles: Record<number, any>;
+}
+
+interface OficioArgs {
+  teacherName: string;
+  personalType: string;
+  licenciaturaName: string;
+  periodoText: string;
+  spec: TableSpec;
+  dateStr: string;
+}
+
+const drawTable = (doc: jsPDF, startY: number, spec: TableSpec, layout: Layout) => {
+  autoTable(doc, {
+    startY,
+    head: [spec.head],
+    body: spec.body,
+    theme: 'grid',
+    headStyles: { fillColor: [200,200,200], textColor: [0,0,0], fontStyle: 'bold', halign: 'center', valign: 'middle', lineColor: [0,0,0], lineWidth: 0.5 },
+    styles: { fontSize: layout.fontSize, cellPadding: layout.pad, lineColor: [0,0,0], lineWidth: 0.3, valign: 'middle' },
+    columnStyles: spec.columnStyles,
+    margin: { left: 25, right: 25 },
+  });
+};
+
+// Dibuja TODO en una hoja con un nivel dado. Devuelve la Y de la última línea del cargo.
+const drawSinglePage = (
+  doc: jsPDF,
+  args: OficioArgs,
+  layout: Layout,
+  bgImage: string | null
+): number => {
+  if (bgImage) {
+    try { addBackgroundImage(doc, bgImage); } catch { /* noop */ }
+  }
+  let y = drawHeader(doc, args.teacherName, args.personalType, args.dateStr, layout.headGap);
+  y = drawIntroText(doc, y, args.licenciaturaName, args.periodoText, layout.introGap);
+  drawTable(doc, y, args.spec, layout);
+  y = (doc as any).lastAutoTable.finalY + layout.afterTable;
+  return drawClosingAndSignature(doc, y, true, layout);
+};
+
+const renderOficio = (doc: jsPDF, args: OficioArgs, bgImage: string | null) => {
+  // 1) Busca el primer nivel donde TODO cabe en una hoja sin invadir el fondo
+  for (const layout of LAYOUTS) {
+    const probe = new jsPDF({ format: 'letter' });
+    const bottom = drawSinglePage(probe, args, layout, null);
+    if (probe.getNumberOfPages() === 1 && bottom <= FOOTER_SAFE_Y) {
+      drawSinglePage(doc, args, layout, bgImage);
+      return;
+    }
+  }
+
+  // 2) Respaldo (demasiadas filas aun con el nivel más compacto):
+  //    tabla en página 1; cierre y firma en página 2 con fondo, encabezado e intro.
+  const layout = LAYOUTS[LAYOUTS.length - 1];
+  if (bgImage) {
+    try { addBackgroundImage(doc, bgImage); } catch { /* noop */ }
+  }
+  let yPos = drawHeader(doc, args.teacherName, args.personalType, args.dateStr, layout.headGap);
+  yPos = drawIntroText(doc, yPos, args.licenciaturaName, args.periodoText, layout.introGap);
+  drawTable(doc, yPos, args.spec, layout);
+
+  doc.addPage();
+  if (bgImage) {
+    try { addBackgroundImage(doc, bgImage); } catch { /* noop */ }
+  }
+  let y2 = drawHeader(doc, args.teacherName, args.personalType, args.dateStr, layout.headGap);
+  y2 = drawIntroText(doc, y2, args.licenciaturaName, args.periodoText, layout.introGap);
+  drawClosingAndSignature(doc, y2, false, layout);
 };
 
 // ════════════════════════════════════════════════════════════════════════════
 // PROGRAMAS REGULARES (escolarizados)
 // ════════════════════════════════════════════════════════════════════════════
 
-// ── Genera el PDF completo en el doc dado ─────────────────────────────────
 const buildOficioPdf = async (
   doc: jsPDF,
   teacherName: string,
@@ -139,53 +259,27 @@ const buildOficioPdf = async (
   tableRows: ScheduleRow[],
   bgImage: string | null
 ) => {
-  if (bgImage) {
-    try { addBackgroundImage(doc, bgImage); } catch { /* noop */ }
-  }
-
-  const dateStr = formatDateToSpanish(new Date());
-  const singlePage = tableRows.length <= MAX_ROWS_SINGLE_PAGE;
-
-  // ── Encabezado y texto intro ──────────────────────────────────────────
-  let yPos = drawHeader(doc, teacherName, personalType, dateStr);
-  yPos = drawIntroText(doc, yPos, licenciaturaName, periodoText);
-
-  // ── Tabla ─────────────────────────────────────────────────────────────
-  autoTable(doc, {
-    startY: yPos,
-    head: [['CLAVE', 'ASIGNATURA', 'HORARIO Y DÍA', 'SEM']],
-    body: tableRows.map(r => [r.clave, r.asignatura, r.horario, r.semestre]),
-    theme: 'grid',
-    headStyles: { fillColor: [200,200,200], textColor: [0,0,0], fontStyle: 'bold', halign: 'center', valign: 'middle', lineColor: [0,0,0], lineWidth: 0.5 },
-    styles: { fontSize: 9, cellPadding: 3, lineColor: [0,0,0], lineWidth: 0.3, valign: 'middle' },
-    columnStyles: {
-      0: { cellWidth: 22, halign: 'center' },
-      1: { cellWidth: 55, halign: 'center' },
-      2: { cellWidth: 70 },
-      3: { cellWidth: 18, halign: 'center' }
+  renderOficio(
+    doc,
+    {
+      teacherName,
+      personalType,
+      licenciaturaName,
+      periodoText,
+      dateStr: formatDateToSpanish(new Date()),
+      spec: {
+        head: ['CLAVE', 'ASIGNATURA', 'HORARIO Y DÍA', 'SEM'],
+        body: tableRows.map(r => [r.clave, r.asignatura, r.horario, r.semestre]),
+        columnStyles: {
+          0: { cellWidth: 22, halign: 'center' },
+          1: { cellWidth: 55, halign: 'center' },
+          2: { cellWidth: 70 },
+          3: { cellWidth: 18, halign: 'center' }
+        },
+      },
     },
-    margin: { left: 25, right: 25 },
-  });
-
-  yPos = (doc as any).lastAutoTable.finalY + 10;
-
-  if (singlePage) {
-    // ── Todo en página 1, respetar SIGNATURE_MIN_Y ────────────────────
-    drawClosingAndSignature(doc, yPos, true);
-  } else {
-    // ── Más de 6 filas: página 2 con fondo, encabezado, intro, cierre y firma ──
-    doc.addPage();
-    if (bgImage) {
-      try { addBackgroundImage(doc, bgImage); } catch { /* noop */ }
-    }
-
-    // Replicar encabezado y texto intro en página 2
-    let y2 = drawHeader(doc, teacherName, personalType, dateStr);
-    y2 = drawIntroText(doc, y2, licenciaturaName, periodoText);
-
-    // Cierre y firma (sin forzar SIGNATURE_MIN_Y en página 2)
-    drawClosingAndSignature(doc, y2, false);
-  }
+    bgImage
+  );
 };
 
 // ── Función principal: genera y descarga ──────────────────────────────────
@@ -442,45 +536,27 @@ const buildOficioLeipPdf = async (
   tableRows: LeipScheduleRow[],
   bgImage: string | null
 ) => {
-  if (bgImage) {
-    try { addBackgroundImage(doc, bgImage); } catch { /* noop */ }
-  }
-
-  const dateStr = formatDateToSpanish(new Date());
-  const singlePage = tableRows.length <= MAX_ROWS_SINGLE_PAGE;
-
-  let yPos = drawHeader(doc, teacherName, personalType, dateStr);
-  yPos = drawIntroText(doc, yPos, licenciaturaName, periodoText);
-
-  autoTable(doc, {
-    startY: yPos,
-    head: [['MÓDULO', 'ASIGNATURA', 'HORARIO Y DÍA', 'GRUPO']],
-    body: tableRows.map(r => [r.modulo, r.asignatura, r.horario, r.grupo]),
-    theme: 'grid',
-    headStyles: { fillColor: [200,200,200], textColor: [0,0,0], fontStyle: 'bold', halign: 'center', valign: 'middle', lineColor: [0,0,0], lineWidth: 0.5 },
-    styles: { fontSize: 9, cellPadding: 3, lineColor: [0,0,0], lineWidth: 0.3, valign: 'middle' },
-    columnStyles: {
-      0: { cellWidth: 30, halign: 'center' },
-      1: { cellWidth: 50, halign: 'center' },
-      2: { cellWidth: 65 },
-      3: { cellWidth: 20, halign: 'center' }
+  renderOficio(
+    doc,
+    {
+      teacherName,
+      personalType,
+      licenciaturaName,
+      periodoText,
+      dateStr: formatDateToSpanish(new Date()),
+      spec: {
+        head: ['MÓDULO', 'ASIGNATURA', 'HORARIO Y DÍA', 'GRUPO'],
+        body: tableRows.map(r => [r.modulo, r.asignatura, r.horario, r.grupo]),
+        columnStyles: {
+          0: { cellWidth: 30, halign: 'center' },
+          1: { cellWidth: 50, halign: 'center' },
+          2: { cellWidth: 65 },
+          3: { cellWidth: 20, halign: 'center' }
+        },
+      },
     },
-    margin: { left: 25, right: 25 },
-  });
-
-  yPos = (doc as any).lastAutoTable.finalY + 10;
-
-  if (singlePage) {
-    drawClosingAndSignature(doc, yPos, true);
-  } else {
-    doc.addPage();
-    if (bgImage) {
-      try { addBackgroundImage(doc, bgImage); } catch { /* noop */ }
-    }
-    let y2 = drawHeader(doc, teacherName, personalType, dateStr);
-    y2 = drawIntroText(doc, y2, licenciaturaName, periodoText);
-    drawClosingAndSignature(doc, y2, false);
-  }
+    bgImage
+  );
 };
 
 // ── Helper interno: obtiene y normaliza los datos de horario LEIP de un maestro ──
