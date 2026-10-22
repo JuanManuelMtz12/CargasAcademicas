@@ -15,19 +15,22 @@ const isOddSemesterGroup = (groupName: string): boolean => {
 const SIGNATURE_MIN_Y = 190;
 // Límite inferior: la ÚLTIMA línea del cargo del director no debe pasar de aquí.
 // La dirección del membrete (fondo) empieza a ~245 mm. Si todavía se encima, baja este valor.
-const FOOTER_SAFE_Y = 242;
+const FOOTER_SAFE_Y = 233;
 
 // Hoja carta: 215.9 x 279.4 mm
 const PAGE_WIDTH = 215.9;
 const PAGE_HEIGHT = 279.4;
 
 // Ajusta estos valores para estirar/encoger el membrete
-// BG_SCALE: 1 = membrete a hoja completa; 0.97 = 3% más chico (se ve completo, con un
-// pequeño margen blanco alrededor). Baja a 0.95 si todavía se ve cortado.
-const BG_SCALE = 0.97;
+// BG_SCALE: 1 = membrete a hoja completa; 0.93 = 7% más chico. Deja margen blanco alrededor
+// para que la impresora no corte la greca (la mayoría no imprime los últimos 4-6 mm).
+// Si todavía se corta, baja a 0.91 o 0.90.
+const BG_SCALE = 0.93;
 // BG_ANCHOR_Y: dónde queda el membrete reducido en vertical.
 //   0 = pegado arriba, 0.5 = centrado, 1 = pegado abajo.
-const BG_ANCHOR_Y = 0.5;
+// 0.35 deja más margen blanco ABAJO (~12 mm) que arriba (~7 mm), que es lo que hace falta
+// para que se impriman las últimas flores de la greca.
+const BG_ANCHOR_Y = 0.35;
 const BG_WIDTH = PAGE_WIDTH * BG_SCALE;
 const BG_HEIGHT = PAGE_HEIGHT * BG_SCALE;
 const BG_X = (PAGE_WIDTH - BG_WIDTH) / 2;
