@@ -12,10 +12,10 @@ interface MaintenanceModalProps {
 }
 
 export function MaintenanceModal({
-  title = 'Mantenimiento Programado',
-  message = 'El sistema estará temporalmente fuera de servicio por labores de mantenimiento. Disculpa las molestias.',
-  startDate = 'Sábado 9 de agosto, 10:00 PM',
-  endDate = 'Domingo 10 de agosto, 6:00 AM',
+  title = 'Estimado usuario',
+  message = 'El sistema se encuentra en servicio en caso de tener algún detalle. Notificar y sera atendida tu solicitud.',
+  startDate = 'LUNES, 08:00 AM',
+  endDate = 'SABADO, 15:00 PM',
   storageKey = 'maintenance-modal-dismissed',
 }: MaintenanceModalProps) {
   const [open, setOpen] = useState(false);
