@@ -80,7 +80,10 @@ interface FormData {
   sede_id: string;
 }
 
-// ── Semestres nones permitidos (primer dígito del nombre del grupo) ──────────
+// ── Semestres nones / pares ──────────────────────────────────────────────────
+// El tipo se deduce de la FECHA DE INICIO del ciclo escolar activo
+// (agosto–enero → nones, febrero–julio → pares), no del nombre del ciclo,
+// porque los nombres ("2027-1", "Ciclo escolar 26-2") no son consistentes.
 type SemesterType = 'nones' | 'pares';
 
 const SEMESTER_DIGITS: Record<SemesterType, string[]> = {
@@ -88,12 +91,13 @@ const SEMESTER_DIGITS: Record<SemesterType, string[]> = {
   pares: ['2', '4', '6', '8'],
 };
 
+// Revisa el primer dígito del nombre del grupo (ej. "301" → 3, "2A" → 2)
 const matchesSemesterType = (groupName: string, type: SemesterType): boolean => {
   const firstDigit = groupName?.trim().match(/\d/)?.[0];
   return SEMESTER_DIGITS[type].includes(firstDigit || '');
 };
 
-// Agosto–enero → nones | febrero–julio → pares (start_date viene como 'YYYY-MM-DD')
+// start_date viene como 'YYYY-MM-DD'
 const semesterTypeFromStartDate = (startDate: string): SemesterType => {
   const month = Number(startDate.split('-')[1]);
   return month >= 8 || month === 1 ? 'nones' : 'pares';
@@ -115,6 +119,8 @@ export default function ProgramasPage() {
   const [isCalendarioModalOpen, setIsCalendarioModalOpen] = useState(false);
   const [calendarioProgram, setCalendarioProgram] = useState<ProgramWithRelations | null>(null);
   const [downloadingConcentrado, setDownloadingConcentrado] = useState(false);
+  // 'all' = todos los docentes; cualquier otro valor = id del docente
+  const [selectedTeacherId, setSelectedTeacherId] = useState<string>('all');
 
   const [formData, setFormData] = useState<FormData>({
     name: '',
@@ -224,219 +230,244 @@ export default function ProgramasPage() {
   };
 
   // ── Descarga del Concentrado General en Excel ─────────────────────────────
+  // Filtra por: (a) docente elegido (o todos) y (b) semestres nones/pares
+  // según el ciclo escolar activo.
   const handleDownloadConcentrado = async () => {
-  try {
-    setDownloadingConcentrado(true);
-    type DayKey = 'Lunes' | 'Martes' | 'Miércoles' | 'Jueves' | 'Viernes' | 'Sábado';
-    const teacherFilter = selectedTeacherId !== 'all' ? selectedTeacherId : null;
+    try {
+      setDownloadingConcentrado(true);
+      type DayKey = 'Lunes' | 'Martes' | 'Miércoles' | 'Jueves' | 'Viernes' | 'Sábado';
+      const teacherFilter = selectedTeacherId !== 'all' ? selectedTeacherId : null;
 
-    // 1. Programas visibles
-    let programsQuery = supabase
-      .from('programs')
-      .select('id, name, sede:sede_id(name)')
-      .order('name');
-    if (!isAdmin && allowedPrograms.length > 0) {
-      programsQuery = programsQuery.in('id', allowedPrograms);
-    }
-    const { data: allPrograms, error: programsError } = await programsQuery;
-    if (programsError) throw programsError;
-
-    const progMap = new Map<string, { name: string; sede: string }>();
-    (allPrograms || []).forEach((p: any) => {
-      const sede = Array.isArray(p.sede) ? p.sede[0] : p.sede;
-      progMap.set(p.id, { name: p.name, sede: sede?.name || '' });
-    });
-
-    const allProgramIds = Array.from(progMap.keys());
-    if (allProgramIds.length === 0) {
-      toast.error('No hay programas disponibles');
-      return;
-    }
-
-    // 2. Docentes de esos programas
-    const { data: teacherPrograms, error: tpError } = await supabase
-      .from('teacher_program')
-      .select(`
-        program_id,
-        teacher:teachers(
-          id, name,
-          category:categories(category)
-        )
-      `)
-      .in('program_id', allProgramIds);
-    if (tpError) throw tpError;
-
-    interface TeacherEntry { name: string; contractType: string; programIds: Set<string> }
-    const teacherMap = new Map<string, TeacherEntry>();
-
-    (teacherPrograms || []).forEach((tp: any) => {
-      const t = Array.isArray(tp.teacher) ? tp.teacher[0] : tp.teacher;
-      if (!t) return;
-      const cat = t.category ? (Array.isArray(t.category) ? t.category[0] : t.category) : null;
-      const catStr = (cat?.category || '').toUpperCase();
-      const contractType = catStr.includes('BASE') ? 'BASE'
-        : catStr.includes('INVITADO') ? 'INVITADO'
-        : catStr || 'N/D';
-
-      if (!teacherMap.has(t.id)) {
-        teacherMap.set(t.id, { name: t.name, contractType, programIds: new Set() });
+      // 1. Programas visibles
+      let programsQuery = supabase
+        .from('programs')
+        .select('id, name, sede:sede_id(name)')
+        .order('name');
+      if (!isAdmin && allowedPrograms.length > 0) {
+        programsQuery = programsQuery.in('id', allowedPrograms);
       }
-      teacherMap.get(t.id)!.programIds.add(tp.program_id);
-    });
+      const { data: allPrograms, error: programsError } = await programsQuery;
+      if (programsError) throw programsError;
 
-    if (teacherFilter && !teacherMap.has(teacherFilter)) {
-      toast.error('El docente seleccionado no pertenece a tus programas');
-      return;
-    }
-
-    // 3. Materias de esos programas
-    const { data: allSubjects } = await supabase
-      .from('subjects')
-      .select('id, program_id')
-      .in('program_id', allProgramIds);
-
-    const subjectProgMap = new Map<string, string>();
-    (allSubjects || []).forEach(s => subjectProgMap.set(s.id, s.program_id));
-    const allSubjectIds = (allSubjects || []).map(s => s.id);
-
-    // 4. Ciclos activos → tipo de semestre de CADA ciclo (por fecha de inicio)
-    const { data: activeCycles, error: cyclesError } = await supabase
-      .from('school_cycles')
-      .select('id, name, start_date')
-      .eq('is_active', true);
-    if (cyclesError) throw cyclesError;
-
-    if (!activeCycles || activeCycles.length === 0) {
-      toast.error('No hay ciclos escolares activos');
-      return;
-    }
-
-    const cycleTypeMap = new Map<string, SemesterType>();
-    activeCycles.forEach(c => cycleTypeMap.set(c.id, semesterTypeFromStartDate(c.start_date)));
-    const activeCycleIds = activeCycles.map(c => c.id);
-
-    // 5. Horarios del ciclo activo (y del docente, si se eligió uno)
-    interface RowData {
-      teacherName: string;
-      contractType: string;
-      programName: string;
-      sede: string;
-      subjectName: string;
-      groupName: string;
-      daySchedules: Partial<Record<DayKey, { start: number; end: number }>>;
-    }
-    const scheduleRows = new Map<string, Map<string, RowData>>();
-
-    if (allSubjectIds.length > 0) {
-      let schedulesQuery = supabase
-        .from('schedule')
-        .select(`
-          day, start_hour, end_hour, school_cycle_id,
-          teacher:teachers(id, name),
-          subject:subjects(id, name),
-          group:groups(id, name)
-        `)
-        .in('subject_id', allSubjectIds)
-        .in('school_cycle_id', activeCycleIds);
-
-      if (teacherFilter) {
-        schedulesQuery = schedulesQuery.eq('teacher_id', teacherFilter);
-      }
-
-      const { data: schedules, error: schedError } = await schedulesQuery
-        .order('teacher_id')
-        .order('subject_id')
-        .order('day');
-      if (schedError) throw schedError;
-
-      (schedules || []).forEach((s: any) => {
-        const teacher = Array.isArray(s.teacher) ? s.teacher[0] : s.teacher;
-        const subject = Array.isArray(s.subject) ? s.subject[0] : s.subject;
-        const group   = Array.isArray(s.group)   ? s.group[0]   : s.group;
-        if (!teacher || !subject || !group) return;
-
-        // Filtro nones/pares según el ciclo al que pertenece este horario
-        const semType = cycleTypeMap.get(s.school_cycle_id);
-        if (!semType || !matchesSemesterType(group.name, semType)) return;
-
-        const programId = subjectProgMap.get(subject.id) || '';
-        const prog = progMap.get(programId);
-        if (!prog) return;
-
-        const contractType = teacherMap.get(teacher.id)?.contractType || 'N/D';
-        const rowKey = `${programId}-${subject.id}-${group.id}`;
-
-        if (!scheduleRows.has(teacher.id)) scheduleRows.set(teacher.id, new Map());
-        const tRows = scheduleRows.get(teacher.id)!;
-        if (!tRows.has(rowKey)) {
-          tRows.set(rowKey, {
-            teacherName: teacher.name,
-            contractType,
-            programName: prog.name,
-            sede: prog.sede,
-            subjectName: subject.name,
-            groupName: group.name,
-            daySchedules: {},
-          });
-        }
-        tRows.get(rowKey)!.daySchedules[s.day as DayKey] = {
-          start: s.start_hour,
-          end: s.end_hour,
-        };
+      const progMap = new Map<string, { name: string; sede: string }>();
+      (allPrograms || []).forEach((p: any) => {
+        const sede = Array.isArray(p.sede) ? p.sede[0] : p.sede;
+        progMap.set(p.id, { name: p.name, sede: sede?.name || '' });
       });
-    }
 
-    // 6. Construir filas
-    const rows: ConcentradoRow[] = [];
+      const allProgramIds = Array.from(progMap.keys());
+      if (allProgramIds.length === 0) {
+        toast.error('No hay programas disponibles');
+        return;
+      }
 
-    const sortedTeachers = Array.from(teacherMap.entries())
-      .filter(([tId]) => !teacherFilter || tId === teacherFilter)
-      .sort((a, b) => a[1].name.localeCompare(b[1].name, 'es'));
+      // 2. Docentes registrados en esos programas
+      const { data: teacherPrograms, error: tpError } = await supabase
+        .from('teacher_program')
+        .select(`
+          program_id,
+          teacher:teachers(
+            id, name,
+            category:categories(category)
+          )
+        `)
+        .in('program_id', allProgramIds);
+      if (tpError) throw tpError;
 
-    sortedTeachers.forEach(([tId]) => {
-      const tRows = scheduleRows.get(tId);
-      if (!tRows || tRows.size === 0) return;
+      interface TeacherEntry {
+        name: string;
+        contractType: string;
+        programIds: Set<string>;
+      }
+      const teacherMap = new Map<string, TeacherEntry>();
 
-      const rowsArr = Array.from(tRows.values())
-        .sort((a, b) => a.programName.localeCompare(b.programName, 'es'));
+      (teacherPrograms || []).forEach((tp: any) => {
+        const t = Array.isArray(tp.teacher) ? tp.teacher[0] : tp.teacher;
+        if (!t) return;
+        const cat = t.category
+          ? (Array.isArray(t.category) ? t.category[0] : t.category)
+          : null;
+        const catStr = (cat?.category || '').toUpperCase();
+        const contractType = catStr.includes('BASE') ? 'BASE'
+          : catStr.includes('INVITADO') ? 'INVITADO'
+          : catStr || 'N/D';
 
-      const hoursOf = (r: RowData) =>
-        Object.values(r.daySchedules).reduce((a, d) => a + (d ? d.end - d.start : 0), 0);
-      const totalHours = rowsArr.reduce((acc, r) => acc + hoursOf(r), 0);
+        if (!teacherMap.has(t.id)) {
+          teacherMap.set(t.id, { name: t.name, contractType, programIds: new Set() });
+        }
+        teacherMap.get(t.id)!.programIds.add(tp.program_id);
+      });
 
-      rowsArr.forEach((r, idx) => {
-        rows.push({
-          teacherName: idx === 0 ? r.teacherName : '',
-          programName: r.programName,
-          contractType: idx === 0 ? r.contractType : '',
-          sede: r.sede,
-          subjectName: r.subjectName,
-          groupName: r.groupName,
-          daySchedules: r.daySchedules,
-          hoursPerSubject: hoursOf(r),
-          totalHoursTeacher: idx === 0 ? totalHours : undefined,
+      // Si se eligió un docente que no pertenece a los programas visibles
+      if (teacherFilter && !teacherMap.has(teacherFilter)) {
+        toast.error('El docente seleccionado no pertenece a tus programas');
+        return;
+      }
+
+      // 3. Materias de esos programas
+      const { data: allSubjects } = await supabase
+        .from('subjects')
+        .select('id, program_id')
+        .in('program_id', allProgramIds);
+
+      const subjectProgMap = new Map<string, string>();
+      (allSubjects || []).forEach(s => subjectProgMap.set(s.id, s.program_id));
+      const allSubjectIds = (allSubjects || []).map(s => s.id);
+
+      // 4. Ciclos escolares activos → tipo de semestre de CADA ciclo (por fecha de inicio)
+      const { data: activeCycles, error: cyclesError } = await supabase
+        .from('school_cycles')
+        .select('id, name, start_date')
+        .eq('is_active', true);
+      if (cyclesError) throw cyclesError;
+
+      if (!activeCycles || activeCycles.length === 0) {
+        toast.error('No hay ciclos escolares activos');
+        return;
+      }
+
+      const cycleTypeMap = new Map<string, SemesterType>();
+      activeCycles.forEach(c =>
+        cycleTypeMap.set(c.id, semesterTypeFromStartDate(c.start_date))
+      );
+      const activeCycleIds = activeCycles.map(c => c.id);
+
+      // 5. Horarios del ciclo activo (y del docente, si se eligió uno)
+      interface RowData {
+        teacherName: string;
+        contractType: string;
+        programName: string;
+        sede: string;
+        subjectName: string;
+        groupName: string;
+        daySchedules: Partial<Record<DayKey, { start: number; end: number }>>;
+      }
+
+      const scheduleRows = new Map<string, Map<string, RowData>>();
+
+      if (allSubjectIds.length > 0) {
+        let schedulesQuery = supabase
+          .from('schedule')
+          .select(`
+            day, start_hour, end_hour, school_cycle_id,
+            teacher:teachers(id, name),
+            subject:subjects(id, name),
+            group:groups(id, name)
+          `)
+          .in('subject_id', allSubjectIds)
+          .in('school_cycle_id', activeCycleIds);
+
+        // El filtro por docente debe ir ANTES de los .order()
+        if (teacherFilter) {
+          schedulesQuery = schedulesQuery.eq('teacher_id', teacherFilter);
+        }
+
+        const { data: schedules, error: schedError } = await schedulesQuery
+          .order('teacher_id')
+          .order('subject_id')
+          .order('day');
+        if (schedError) throw schedError;
+
+        (schedules || []).forEach((s: any) => {
+          const teacher = Array.isArray(s.teacher) ? s.teacher[0] : s.teacher;
+          const subject = Array.isArray(s.subject) ? s.subject[0] : s.subject;
+          const group   = Array.isArray(s.group)   ? s.group[0]   : s.group;
+          if (!teacher || !subject || !group) return;
+
+          // ── FILTRO: nones o pares según el ciclo al que pertenece el horario ──
+          const semType = cycleTypeMap.get(s.school_cycle_id);
+          if (!semType || !matchesSemesterType(group.name, semType)) return;
+
+          const programId = subjectProgMap.get(subject.id) || '';
+          const prog = progMap.get(programId);
+          if (!prog) return;
+
+          const contractType = teacherMap.get(teacher.id)?.contractType || 'N/D';
+          const rowKey = `${programId}-${subject.id}-${group.id}`;
+
+          if (!scheduleRows.has(teacher.id)) {
+            scheduleRows.set(teacher.id, new Map());
+          }
+          const tRows = scheduleRows.get(teacher.id)!;
+          if (!tRows.has(rowKey)) {
+            tRows.set(rowKey, {
+              teacherName: teacher.name,
+              contractType,
+              programName: prog.name,
+              sede: prog.sede,
+              subjectName: subject.name,
+              groupName: group.name,
+              daySchedules: {},
+            });
+          }
+          tRows.get(rowKey)!.daySchedules[s.day as DayKey] = {
+            start: s.start_hour,
+            end: s.end_hour,
+          };
+        });
+      }
+
+      // 6. Construir filas — solo docentes con horario en el ciclo activo
+      const rows: ConcentradoRow[] = [];
+
+      const sortedTeachers = Array.from(teacherMap.entries())
+        .filter(([tId]) => !teacherFilter || tId === teacherFilter)
+        .sort((a, b) => a[1].name.localeCompare(b[1].name, 'es'));
+
+      sortedTeachers.forEach(([tId]) => {
+        const tRows = scheduleRows.get(tId);
+
+        // Sin horarios en el ciclo activo (o de otro tipo de semestre) → se omite
+        if (!tRows || tRows.size === 0) return;
+
+        const rowsArr = Array.from(tRows.values())
+          .sort((a, b) => a.programName.localeCompare(b.programName, 'es'));
+
+        const hoursOf = (r: RowData) =>
+          Object.values(r.daySchedules)
+            .reduce((a, d) => a + (d ? d.end - d.start : 0), 0);
+
+        const totalHours = rowsArr.reduce((acc, r) => acc + hoursOf(r), 0);
+
+        rowsArr.forEach((r, idx) => {
+          rows.push({
+            teacherName: idx === 0 ? r.teacherName : '',
+            programName: r.programName,
+            contractType: idx === 0 ? r.contractType : '',
+            sede: r.sede,
+            subjectName: r.subjectName,
+            groupName: r.groupName,
+            daySchedules: r.daySchedules,
+            hoursPerSubject: hoursOf(r),
+            totalHoursTeacher: idx === 0 ? totalHours : undefined,
+          });
         });
       });
-    });
 
-    if (rows.length === 0) {
-      toast.error('No hay horarios para el docente y ciclo seleccionados');
-      return;
+      if (rows.length === 0) {
+        toast.error('No hay horarios para el docente y ciclo seleccionados');
+        return;
+      }
+
+      // Nombre del archivo: docente (si aplica) + ciclo(s) + tipo de semestre
+      const teacherPart = teacherFilter
+        ? ` - ${teacherMap.get(teacherFilter)!.name}`
+        : '';
+      const cycleNames = activeCycles.map(c => c.name).join(' + ');
+      const types = Array.from(new Set(cycleTypeMap.values())).join(' y ');
+
+      downloadConcentradoExcel(
+        rows,
+        `Concentrado${teacherPart} - ${cycleNames} (semestres ${types})`
+      );
+      toast.success('Concentrado descargado correctamente');
+    } catch (error: any) {
+      console.error('Error generating concentrado:', error);
+      toast.error('Error al generar el concentrado');
+    } finally {
+      setDownloadingConcentrado(false);
     }
-
-    // Nombre del archivo: docente (si aplica) + ciclo(s) + tipo de semestre
-    const teacherPart = teacherFilter ? ` - ${teacherMap.get(teacherFilter)!.name}` : '';
-    const cycleNames = activeCycles.map(c => c.name).join(' + ');
-    const types = Array.from(new Set(cycleTypeMap.values())).join(' y ');
-    downloadConcentradoExcel(rows, `Concentrado${teacherPart} - ${cycleNames} (semestres ${types})`);
-    toast.success('Concentrado descargado correctamente');
-  } catch (error: any) {
-    console.error('Error generating concentrado:', error);
-    toast.error('Error al generar el concentrado');
-  } finally {
-    setDownloadingConcentrado(false);
-  }
-};
+  };
 
   const openCreateModal = () => {
     setEditingProgram(null);
@@ -598,6 +629,19 @@ export default function ProgramasPage() {
           </p>
         </div>
         <div className="flex gap-2">
+          {/* ── Selector de docente para el Concentrado ── */}
+          <Select value={selectedTeacherId} onValueChange={setSelectedTeacherId}>
+            <SelectTrigger className="w-[220px]">
+              <SelectValue placeholder="Docente" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todos los docentes</SelectItem>
+              {teachers.map((t) => (
+                <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
           {/* ── Botón Concentrado General Excel ── */}
           <Button
             variant="outline"
